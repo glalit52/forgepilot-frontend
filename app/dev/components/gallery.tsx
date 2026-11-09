@@ -4,136 +4,63 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ActorChip } from "@/components/shared/actor-chip";
+import { ActivityTimeline } from "@/components/shared/activity-timeline";
 import { AiCodeFlag } from "@/components/shared/ai-code-flag";
 import { DiffViewer } from "@/components/shared/diff-viewer";
-import { EvidenceTimeline } from "@/components/shared/evidence-timeline";
 import { HealthBreakdown } from "@/components/shared/health-breakdown";
 import { HealthPill, HealthScore } from "@/components/shared/health-score";
 import { KpiCard } from "@/components/shared/kpi-card";
-import {
-  CriticalityBadge,
-  MockDataBadge,
-  SeverityBadge,
-  SlaStatusBadge,
-  TaskTypeBadge,
-} from "@/components/shared/misc";
-import { SlaCountdown } from "@/components/shared/sla-countdown";
-import { SlaMeter } from "@/components/shared/sla-meter";
-import { StatusBadge, VerificationBadge } from "@/components/shared/status-badge";
+import { LifecycleStepper } from "@/components/shared/lifecycle";
+import { LogViewer } from "@/components/shared/log-viewer";
+import { CommitSha, MockDataBadge, ModuleBadge, Monogram, PlanBadge } from "@/components/shared/misc";
+import { FailureList, RunSummary } from "@/components/shared/run-summary";
+import { FailureClassBadge, RunStatusBadge, SessionStatusBadge, SeverityBadge, TaskStatusBadge } from "@/components/shared/status-badge";
 import { EmptyState, ErrorState } from "@/components/shared/states";
-import { VerificationSummary } from "@/components/shared/verification-summary";
+import { UsageMeter } from "@/components/shared/usage-meter";
 import { Logo } from "@/components/shell/logo";
 import { ThemeToggle } from "@/components/shell/theme-toggle";
-import { TASK_STATES, type DiffFile, type EvidenceItem, type VerificationRun } from "@/lib/schemas";
+import { TASK_STATUSES, type ActivityItem, type DiffFile, type LifecycleStep, type TestResult, type TestRun } from "@/lib/schemas";
 
-const ver: VerificationRun = {
-  id: "ver_demo",
-  agentRunId: "run_demo",
-  testsRun: 128,
-  testsPassed: 128,
-  testsFailed: 0,
-  securityFindings: { critical: 0, high: 0, medium: 1 },
-  riskScore: 24,
-  status: "passed",
-  durationMin: 12,
-  coveragePct: 71,
-  testResults: [
-    {
-      name: "retries on 503 with back-off",
-      suite: "integration",
-      status: "passed",
-      durationMs: 840,
-      flaky: false,
-    },
-    {
-      name: "renders confirmation within 2s",
-      suite: "e2e",
-      status: "passed",
-      durationMs: 2310,
-      flaky: true,
-    },
-  ],
-  artifacts: [
-    { kind: "screenshot", label: "Before / after", url: "#" },
-    { kind: "log", label: "Full test log", url: "#" },
-  ],
-  scanners: ["Semgrep", "Trivy"],
+const SHA = "3f9c2a1b7d4e5f60718293a4b5c6d7e8f9012345";
+const run: TestRun = {
+  id: "run_demo", orgId: "ws", repositoryId: "repo", pullRequestId: "pr", trigger: "pull_request.opened", headSha: SHA, baseSha: "9a8b7c6d5e4f30211234567890abcdef12345678", branch: "fp/task-042-saved-filters",
+  environment: { name: "preview", url: "https://pr-412.preview.example", node: "22.11", python: null, worker: "ss-worker-42", region: "us-east" },
+  status: "failed", startedAt: "2026-11-09T09:40:00Z", finishedAt: "2026-11-09T09:47:12Z", durationSec: 432, selectedSuites: [], retestOf: null,
+  checkRun: { name: "ForgePilot ShipSafe", conclusion: "failure", detailsUrl: "#" }, totals: { passed: 186, failed: 1, flaky: 1, skipped: 2 }, billedBrowserMinutes: 11.5,
 };
-
-const ev = (
-  i: number,
-  event: EvidenceItem["event"],
-  actor: EvidenceItem["actorResolved"],
-  payload: Record<string, unknown> = {},
-): EvidenceItem => ({
-  id: `ev_${i}`,
-  taskId: "task_demo",
-  event,
-  actor: { type: actor.type, id: actor.id },
-  actorResolved: actor,
-  at: new Date(Date.UTC(2026, 10, 8, 9, i * 7)).toISOString().replace(/\.\d{3}Z$/, "Z"),
-  payload,
-  hash: `a1b2c3d4e5f6${i}0`.padEnd(16, "0"),
-  prevHash: i ? `a1b2c3d4e5f6${i - 1}0`.padEnd(16, "0") : null,
-  hashValid: true,
-});
-
-const people = {
-  kabir: {
-    type: "person" as const,
-    id: "u_kabir",
-    name: "Kabir Singh",
-    detail: "Delivery Manager",
-  },
-  agent: {
-    type: "agent" as const,
-    id: "claude_code:claude-sonnet",
-    name: "Claude Code",
-    detail: "claude-sonnet",
-  },
-  sys: {
-    type: "system" as const,
-    id: "verification-engine",
-    name: "Verification engine",
-    detail: "Tests + security scans",
-  },
-  arjun: { type: "person" as const, id: "u_arjun", name: "Arjun Rao", detail: "Senior Engineer" },
-};
-
-const records = [
-  ev(0, "task_created", people.kabir, { source: "JIRA-1009" }),
-  ev(1, "agent_run_started", people.agent, { attempt: 1 }),
-  ev(2, "verification_passed", people.sys, { testsPassed: 128, riskScore: 24 }),
-  ev(3, "engineer_signed_off", people.arjun, { reviewedDiff: true }),
+const results: TestResult[] = [
+  { id: "r1", runId: "run_demo", suiteId: "s", name: "billing.spec.ts › updates card on file", outcome: "failed", classification: "product_defect", durationMs: 8400, retries: 0, error: "Expected 'Card updated' toast, received nothing. POST /api/billing/card returned 500.", evidence: [{ kind: "screenshot", label: "Failure screenshot", ref: "a/1.png" }, { kind: "trace", label: "Playwright trace", ref: "a/trace.zip" }, { kind: "console", label: "Browser console", ref: "a/c.log" }], firstFailedAt: null },
+  { id: "r2", runId: "run_demo", suiteId: "s", name: "billing.spec.ts › shows invoice history", outcome: "flaky", classification: "flaky", durationMs: 12000, retries: 1, error: "Timed out waiting for selector (passed on retry).", evidence: [], firstFailedAt: null },
 ];
-
+const actors = {
+  agent: { type: "agent" as const, id: "agent_claude", name: "Claude Code", detail: "claude-sonnet" },
+  person: { type: "person" as const, id: "u_dev", name: "Dev Patel", detail: "Staff engineer" },
+  system: { type: "system" as const, id: "shipsafe", name: "ShipSafe", detail: "Verification" },
+};
+const activity: ActivityItem[] = [
+  { id: "a1", orgId: "ws", actor: { type: "person", id: "u_dev" }, actorResolved: actors.person, action: "task.created", label: "created a task", resource: "task:t1", href: "#", at: "2026-11-09T09:00:00Z", detail: "Add saved filters", ip: null },
+  { id: "a2", orgId: "ws", actor: { type: "agent", id: "agent_claude" }, actorResolved: actors.agent, action: "pull_request.opened", label: "opened a pull request", resource: "pr:p1", href: "#", at: "2026-11-09T09:31:00Z", detail: "#412 Add saved filters", ip: null },
+  { id: "a3", orgId: "ws", actor: { type: "system", id: "shipsafe" }, actorResolved: actors.system, action: "test.failed", label: "verification failed", resource: "run:r1", href: "#", at: "2026-11-09T09:47:00Z", detail: "186 passed · 1 failed", ip: null },
+];
+const steps: LifecycleStep[] = [
+  { key: "plan", label: "Plan", state: "done", detail: "3 criteria", href: null },
+  { key: "execute", label: "Execute", state: "done", detail: null, href: null },
+  { key: "propose", label: "Propose", state: "done", detail: "PR #412", href: null },
+  { key: "verify", label: "Verify", state: "failed", detail: "1 defect", href: null },
+  { key: "remediate", label: "Remediate", state: "current", detail: "Fix task running", href: null },
+  { key: "review", label: "Review", state: "upcoming", detail: null, href: null },
+  { key: "merge", label: "Merge", state: "upcoming", detail: "In GitHub", href: null },
+  { key: "maintain", label: "Maintain", state: "upcoming", detail: null, href: null },
+];
 const diff: DiffFile[] = [
-  {
-    path: "src/lib/http/retry.ts",
-    status: "modified",
-    additions: 3,
-    deletions: 1,
-    aiAuthored: true,
-    lines: [
-      { kind: "hunk", oldNo: null, newNo: null, text: "@@ -10,4 +10,6 @@" },
-      { kind: "context", oldNo: 10, newNo: 10, text: "export async function confirm(req) {" },
-      { kind: "del", oldNo: 11, newNo: null, text: "  return fetch(URL);" },
-      { kind: "add", oldNo: null, newNo: 11, text: "  return withRetry(() => fetch(URL), {" },
-      { kind: "add", oldNo: null, newNo: 12, text: "    attempts: 3," },
-      { kind: "add", oldNo: null, newNo: 13, text: "  });" },
-      { kind: "context", oldNo: 12, newNo: 14, text: "}" },
-    ],
-  },
+  { path: "src/lib/http/retry.ts", status: "modified", additions: 3, deletions: 1, aiAuthored: true, lines: [{ kind: "hunk", oldNo: null, newNo: null, text: "@@ -10,4 +10,6 @@" }, { kind: "context", oldNo: 10, newNo: 10, text: "export async function confirm(req) {" }, { kind: "del", oldNo: 11, newNo: null, text: "  return fetch(URL);" }, { kind: "add", oldNo: null, newNo: 11, text: "  return withRetry(() => fetch(URL), { attempts: 3 });" }, { kind: "context", oldNo: 12, newNo: 12, text: "}" }] },
 ];
-
-// Sample due dates relative to page load (module scope keeps render pure).
-const LOADED_AT = Date.now();
-const SAMPLE_DUE = {
-  ok: new Date(LOADED_AT + 3 * 86_400_000).toISOString(),
-  atRisk: new Date(LOADED_AT + 5 * 3_600_000).toISOString(),
-  breached: new Date(LOADED_AT - 2 * 3_600_000).toISOString(),
-  met: new Date(LOADED_AT).toISOString(),
-};
+const log = [
+  { seq: 0, at: "2026-11-09T09:00:00Z", level: "info" as const, text: "Workspace ready · container 2 vCPU / 4 GB · network: allowlist" },
+  { seq: 1, at: "2026-11-09T09:00:02Z", level: "tool" as const, text: "edit src/components/Filters.tsx (+18 −6)" },
+  { seq: 2, at: "2026-11-09T09:00:05Z", level: "approval" as const, text: "Paused: waiting for approval to write migrations/0042.py" },
+  { seq: 3, at: "2026-11-09T09:00:09Z", level: "success" as const, text: "tests: 64 passed" },
+];
 
 function Row({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -147,78 +74,69 @@ function Row({ title, children }: { title: string; children: React.ReactNode }) 
 function Specimen() {
   return (
     <div className="flex flex-col gap-6">
-      <Row title="Buttons (accent = primary actions only)">
-        <Button>Approve</Button>
-        <Button variant="outline">Request changes</Button>
+      <Row title="Buttons (violet = primary only)">
+        <Button>Launch agent</Button>
+        <Button variant="outline">Retry with notes</Button>
         <Button variant="secondary">Secondary</Button>
         <Button variant="ghost">Ghost</Button>
-        <Button variant="destructive">Stop</Button>
+        <Button variant="destructive">Cancel session</Button>
         <Button disabled>Disabled</Button>
       </Row>
-      <Row title="StatusBadge — every task state">
-        {TASK_STATES.map((s) => (
-          <StatusBadge key={s} state={s} />
-        ))}
-      </Row>
-      <Row title="Verification, SLA, type, severity, criticality">
-        <VerificationBadge status="passed" />
-        <VerificationBadge status="failed" />
-        <VerificationBadge status="running" />
-        <SlaStatusBadge status="on_track" />
-        <SlaStatusBadge status="at_risk" />
-        <SlaStatusBadge status="breached" />
-        <TaskTypeBadge type="cve_patch" />
+      <Row title="Task status">{TASK_STATUSES.map((s) => <TaskStatusBadge key={s} status={s} />)}</Row>
+      <Row title="Sessions, runs, failure classes, severity">
+        <SessionStatusBadge status="running" />
+        <SessionStatusBadge status="waiting" />
+        <RunStatusBadge status="passed" />
+        <RunStatusBadge status="failed" />
+        <RunStatusBadge status="errored" />
+        <FailureClassBadge classification="product_defect" />
+        <FailureClassBadge classification="flaky" />
+        <FailureClassBadge classification="infrastructure" />
         <SeverityBadge severity="critical" />
         <SeverityBadge severity="medium" />
-        <CriticalityBadge criticality="critical" />
+      </Row>
+      <Row title="Brand & misc">
+        <ModuleBadge module="devpilot" />
+        <ModuleBadge module="shipsafe" />
+        <ModuleBadge module="codekeeper" />
+        <PlanBadge plan="team" />
         <MockDataBadge />
-        <Badge variant="info">Info</Badge>
+        <CommitSha sha={SHA} />
+        <Monogram text="GH" />
+        <Badge variant="info">Beta</Badge>
+        <AiCodeFlag pct={88} />
       </Row>
-      <Row title="ActorChip — agent vs person vs system">
-        <ActorChip actor={people.agent} />
-        <ActorChip actor={people.arjun} />
-        <ActorChip actor={people.sys} />
+      <Row title="ActorChip: agent vs person vs system">
+        <ActorChip actor={actors.agent} />
+        <ActorChip actor={actors.person} />
+        <ActorChip actor={actors.system} />
       </Row>
-      <Row title="AiCodeFlag">
-        <AiCodeFlag pct={78} />
-        <AiCodeFlag pct={22} />
-      </Row>
-      <Row title="HealthScore & HealthPill (≥80 green · 60–79 amber · <60 red)">
+      <Row title="Health (≥80 green · 60–79 amber · <60 red · unknown)">
         <HealthScore score={86} delta={4} />
         <HealthScore score={68} delta={-2} showLabel />
-        <HealthScore score={52} delta={0} size={72} />
+        <HealthScore score={52} size={72} />
+        <HealthScore score={null} showLabel />
         <HealthPill score={91} />
         <HealthPill score={66} />
         <HealthPill score={41} />
       </Row>
-      <Row title="SlaCountdown">
-        <SlaCountdown dueAt={SAMPLE_DUE.ok} risk="ok" />
-        <SlaCountdown dueAt={SAMPLE_DUE.atRisk} risk="at_risk" />
-        <SlaCountdown dueAt={SAMPLE_DUE.breached} risk="breached" />
-        <SlaCountdown dueAt={SAMPLE_DUE.met} risk="met" />
-      </Row>
       <div className="grid gap-3 sm:grid-cols-2">
-        <KpiCard
-          label="SLA met"
-          value="96.4%"
-          delta={1.2}
-          deltaLabel="1.2 pts"
-          hint="target 95%"
-          tone="success"
-        />
-        <KpiCard
-          label="Changes delivered"
-          value="14"
-          delta={3}
-          hint="vs previous 30 days"
-          spark={[2, 3, 1, 4, 3, 5, 4, 6]}
-        />
+        <KpiCard label="Verified tasks" value="38" delta={6} hint="vs last month" spark={[3, 4, 2, 5, 6, 7, 6, 9]} tone="success" />
+        <KpiCard label="Execution spend" value="$312" hint="of $400 budget" />
       </div>
       <Card>
         <CardContent className="flex flex-col gap-4 pt-5">
-          <SlaMeter metPct={96.4} targetPct={95} breaches={0} />
-          <SlaMeter metPct={88} targetPct={95} breaches={2} label="Approval turnaround" />
-          <SlaMeter metPct={71} targetPct={95} breaches={5} label="Critical CVEs" />
+          <UsageMeter label="Agent runtime" used={4120} limit={6000} projected={7300} unit="min" />
+          <UsageMeter label="Browser minutes" used={9100} limit={20000} projected={15000} unit="min" />
+          <UsageMeter label="Seats" used={6} limit={null} />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>LifecycleStepper</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <LifecycleStepper steps={steps} />
         </CardContent>
       </Card>
       <Card>
@@ -226,32 +144,32 @@ function Specimen() {
           <CardTitle>HealthBreakdown</CardTitle>
         </CardHeader>
         <CardContent>
-          <HealthBreakdown
-            health={{
-              score: 72,
-              dependencies: 68,
-              security: 54,
-              buildStability: 88,
-              tests: 61,
-              docs: 83,
-            }}
-          />
+          <HealthBreakdown health={{ score: 74, scoreVersion: "v1.2", dependencies: 68, security: 54, buildStability: 88, tests: 81, docs: null }} />
         </CardContent>
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>VerificationSummary</CardTitle>
+          <CardTitle>RunSummary & FailureList</CardTitle>
         </CardHeader>
-        <CardContent>
-          <VerificationSummary verification={ver} detailed />
+        <CardContent className="flex flex-col gap-4">
+          <RunSummary run={run} />
+          <FailureList results={results} />
         </CardContent>
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>EvidenceTimeline</CardTitle>
+          <CardTitle>LogViewer</CardTitle>
         </CardHeader>
         <CardContent>
-          <EvidenceTimeline records={records} chainValid />
+          <LogViewer lines={log} live redactions={1} height="h-40" />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>ActivityTimeline</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ActivityTimeline items={activity} />
         </CardContent>
       </Card>
       <Card>
@@ -263,7 +181,7 @@ function Specimen() {
         </CardContent>
       </Card>
       <div className="grid gap-3 sm:grid-cols-2">
-        <EmptyState title="You're all caught up" description="No approvals waiting." />
+        <EmptyState title="No agent sessions yet" description="Delegate a task to watch an agent work." />
         <ErrorState error={new Error("Mock API unavailable")} onRetry={() => {}} />
       </div>
     </div>
@@ -276,11 +194,11 @@ export function Gallery() {
       <header className="flex h-14 items-center justify-between border-b px-6">
         <div className="flex items-center gap-3">
           <Logo />
-          <span className="text-muted-foreground text-sm">Component gallery (FE-02)</span>
+          <span className="text-muted-foreground text-sm">Component gallery</span>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" asChild>
-            <Link href="/login">Back to app</Link>
+            <Link href="/">Back to site</Link>
           </Button>
           <ThemeToggle />
         </div>

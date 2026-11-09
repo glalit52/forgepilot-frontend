@@ -8,7 +8,7 @@ export default defineConfig({
   workers: 1,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "list",
-  timeout: 60_000,
+  timeout: 90_000,
   expect: { timeout: 10_000 },
   use: {
     baseURL: `http://localhost:${PORT}`,
@@ -21,6 +21,6 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 240_000,
     // Short simulated agent/verification/scan durations keep journeys fast.
-    env: { FP_MOCK_RUN_MS: "4000", FP_MOCK_VERIFY_MS: "3000", FP_MOCK_SCAN_MS: "3000" },
+    env: { FP_MOCK_RUN_MS: "4000", FP_MOCK_VERIFY_MS: "3000", FP_MOCK_SCAN_MS: "3000", FP_MOCK_INDEX_MS: "1500" },
   },
 });

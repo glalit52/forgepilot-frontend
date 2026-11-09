@@ -5,7 +5,7 @@ import { renderContract } from "@/lib/mock/contract";
 
 const FILE = path.join(process.cwd(), "docs/api-contract.md");
 
-/** FE-19 AC: the contract matches lib/schemas exactly. */
+/** The backend contract always matches the route table and lib/schemas exactly. */
 it("docs/api-contract.md matches the route table and Zod schemas", () => {
   const expected = renderContract();
   if (process.env.UPDATE_CONTRACT === "1" || !existsSync(FILE)) writeFileSync(FILE, expected);

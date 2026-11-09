@@ -17,7 +17,7 @@ export function KpiCard({
   tone,
   className,
 }: {
-  label: string;
+  label: React.ReactNode;
   value: React.ReactNode;
   hint?: React.ReactNode;
   delta?: number | null;

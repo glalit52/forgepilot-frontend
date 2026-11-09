@@ -1,36 +1,33 @@
 import { describe, expect, it } from "vitest";
 import { dispatch, routes } from "@/lib/mock/handlers";
 
-const GETS: [string, string][] = [
-  ["u_ravi", "/session"],
-  ["u_ravi", "/overview"],
-  ["u_ravi", "/applications"],
-  ["u_ravi", "/applications/app_payments_gateway"],
-  ["u_ravi", "/tasks"],
-  ["u_ravi", "/tasks/task_010"],
-  ["u_ravi", "/tasks/task_010/diff"],
-  ["u_ravi", "/approvals"],
-  ["u_ravi", "/evidence"],
-  ["u_ravi", "/reports/savings"],
-  ["u_ravi", "/reports/sla"],
-  ["u_ravi", "/integrations"],
-  ["u_ravi", "/notifications"],
-  ["u_ravi", "/team"],
-  ["u_ravi", "/search"],
-  ["u_ravi", "/activity"],
-  ["u_arjun", "/tasks/task_004/log"],
-  ["u_arjun", "/clients"],
-  ["u_arjun", "/clients/org_acme_bank"],
-  ["u_arjun", "/repositories"],
-  ["u_arjun", "/repositories/repo_payments_gateway_service"],
-  ["u_kabir", "/ops"],
+const as = (session: string, workspace?: string) => ({ session, workspace });
+
+const GETS = [
+  "/session", "/overview", "/projects", "/projects/proj_web", "/repositories", "/repositories/repo_web",
+  "/devpilot/overview", "/tasks", "/tasks/task_001", "/tasks/task_004", "/tasks/task_005", "/sessions", "/sessions/sess_002_1",
+  "/sessions/sess_002_1/log", "/sessions/sess_001_1/diff", "/workspaces", "/agents",
+  "/shipsafe/overview", "/test-suites", "/test-runs", "/test-runs/run_015", "/bugs", "/bugs/bug_002",
+  "/pull-requests", "/pull-requests/pr_h1", "/pull-requests/pr_001/diff",
+  "/codekeeper/overview", "/dependencies", "/findings", "/approvals", "/analytics", "/integrations",
+  "/members", "/policy", "/api-keys", "/audit-logs", "/billing", "/notifications", "/search?q=pay",
+  "/github/repositories",
 ];
 
 describe("mock API smoke", () => {
-  it.each(GETS)("%s GET %s returns 200 with a schema-valid body", (user, path) => {
-    const r = dispatch("GET", path, new URLSearchParams(), undefined, user);
-    if (r.status !== 200) console.error(path, JSON.stringify(r.body, null, 2).slice(0, 2000));
+  it.each(GETS)("GET %s returns 200 with a schema-valid body", (path) => {
+    const [p, q] = path.split("?");
+    const r = dispatch("GET", p, new URLSearchParams(q), undefined, as("u_maya", "ws_lumen"));
+    if (r.status !== 200) console.error(path, JSON.stringify(r.body, null, 2).slice(0, 3000));
     expect(r.status).toBe(200);
+  });
+
+  it.each([["u_sofia", "ws_northwind"], ["u_maya", "ws_maya"], ["u_jordan", "ws_lumen"]])("%s in %s can load every dashboard", (u, w) => {
+    for (const p of ["/overview", "/devpilot/overview", "/shipsafe/overview", "/codekeeper/overview", "/analytics", "/billing"]) {
+      const r = dispatch("GET", p, new URLSearchParams(), undefined, as(u, w));
+      if (r.status !== 200) console.error(p, JSON.stringify(r.body).slice(0, 2000));
+      expect(r.status).toBe(200);
+    }
   });
 
   it("has a unique method+path for every route", () => {

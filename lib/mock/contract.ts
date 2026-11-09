@@ -3,15 +3,6 @@ import { z } from "zod";
 import * as S from "@/lib/schemas";
 import { routes } from "./handlers";
 
-const AUTH_LABEL = {
-  public: "None",
-  any: "Any signed-in user",
-  portal: "Client portal roles",
-  console: "ForgePilot console roles",
-  manager: "fp_manager only",
-} as const;
-
-/** Every exported `XxxSchema` becomes a named, $ref-able definition. */
 function buildRegistry() {
   const registry = z.registry<{ id: string }>();
   const names = new Map<z.ZodType, string>();
@@ -28,18 +19,18 @@ function buildRegistry() {
 function typeName(schema: z.ZodType, names: Map<z.ZodType, string>): string {
   const named = names.get(schema);
   if (named) return named;
-  if (schema instanceof z.ZodArray) return `${typeName(schema.element as z.ZodType, names)}[]`;
+  if (schema instanceof z.ZodArray) {
+    const inner = typeName(schema.element as z.ZodType, names);
+    return inner === "inline" ? "inline" : `${inner}[]`;
+  }
   return "inline";
 }
 
+const authLabel = (a: string) => (a === "public" ? "None" : a === "member" ? "Any workspace member" : `Permission \`${a}\``);
+
 export function renderContract(): string {
   const { registry, names } = buildRegistry();
-  const defs = z.toJSONSchema(registry, {
-    unrepresentable: "any",
-    io: "output",
-    uri: (id) => `#/schemas/${id}`,
-  }).schemas;
-
+  const defs = z.toJSONSchema(registry, { unrepresentable: "any", io: "output", uri: (id) => `#/schemas/${id}` }).schemas;
   const used = new Set<string>();
   const ref = (schema: z.ZodType) => {
     const n = typeName(schema, names);
@@ -47,30 +38,26 @@ export function renderContract(): string {
       used.add(n.replace(/\[\]$/, ""));
       return `[\`${n}\`](#${n.replace(/\[\]$/, "").toLowerCase()})`;
     }
-    return (
-      "```json\n" +
-      JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any", io: "output" }), null, 2) +
-      "\n```"
-    );
+    return "\n\n```json\n" + JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any", io: "output" }), null, 2) + "\n```";
   };
-
-  const lines: string[] = [
-    "# ForgePilot API contract (Phase 1)",
+  const lines = [
+    "# ForgePilot API contract",
     "",
     "> Generated from `lib/mock/handlers.ts` and `lib/schemas`. Do not edit by hand —",
     "> run `UPDATE_CONTRACT=1 pnpm test` to regenerate. `pnpm test` fails if this file is out of date.",
     "",
-    "Base URL: `/api/mock` today (set `NEXT_PUBLIC_API_BASE` to point the frontend at the real backend).",
-    'All bodies are JSON. Errors return `{ "error": string, "details"?: unknown }` with 400/401/403/404/409/422.',
-    "Auth: the mock session is the `fp_session` cookie (user id). The real backend should use the identity",
-    "provider of choice; the role rules below must be preserved.",
+    "Base URL: `/api/mock` today (set `NEXT_PUBLIC_API_BASE` for the real backend). JSON bodies.",
+    'Errors: `{ "error": string, "details"?: unknown }` with 400/401/402 (plan limit)/403/404/409/422.',
+    "Auth: mock cookies `fp_session` (user) and `fp_ws` (active workspace). Every route is scoped to the active workspace.",
     "",
-    "Product rules the backend must enforce (not just the UI):",
+    "Guardrails the backend must enforce (not just the UI):",
     "",
-    "- Sign-off requires the latest verification `passed` **and** `reviewedDiff: true` (409 otherwise).",
-    "- `open_pr` only after sign-off. Nothing in this API merges: merge happens in the client's Git.",
-    "- Every state-changing action appends a hash-chained `EvidenceRecord` with the correct actor (person, agent or system).",
-    "- Portal users only ever see their own organization's data. Margin is only returned to `fp_manager`.",
+    "- **Tenant isolation:** records from another workspace return 404.",
+    "- **Least privilege:** permissions per route below; viewers are read-only; approvals need the approver role named on the request and requesters can't approve themselves.",
+    "- **No auto-merge:** passing checks set `review_ready`; merge state comes from GitHub.",
+    "- **Loop protection:** fix tasks per bug are capped by `policy.maxFixRetries`; retries are capped too.",
+    "- **Budgets:** with `hardCap`, launches are refused once the monthly budget is used (402).",
+    "- **Commit pinning:** every test run and scan records exact SHAs.",
     "",
     "## Endpoints",
     "",
@@ -80,36 +67,24 @@ export function renderContract(): string {
   for (const r of routes) {
     const req = r.request ? typeName(r.request, names) : "—";
     const res = typeName(r.response, names);
-    lines.push(
-      `| ${r.method} | \`${r.path}\` | ${AUTH_LABEL[r.auth]} | ${req === "—" ? "—" : req === "inline" ? "see below" : `\`${req}\``} | ${res === "inline" ? "see below" : `\`${res}\``} | ${r.summary.replace(/\|/g, "\\|")} |`,
-    );
+    const cell = (n: string) => (n === "—" ? "—" : n === "inline" ? "see below" : `\`${n}\``);
+    lines.push(`| ${r.method} | \`${r.path}\` | ${authLabel(r.auth)} | ${cell(req)} | ${cell(res)} | ${r.summary.replace(/\|/g, "\\|")} |`);
   }
   lines.push("", "## Endpoint details", "");
   for (const r of routes) {
-    lines.push(
-      `### ${r.method} \`${r.path}\``,
-      "",
-      r.summary,
-      "",
-      `- **Auth:** ${AUTH_LABEL[r.auth]}`,
-    );
+    lines.push(`### ${r.method} \`${r.path}\``, "", r.summary, "", `- **Auth:** ${authLabel(r.auth)}`);
     if (r.request) lines.push(`- **Request body:** ${ref(r.request)}`);
     lines.push(`- **Response 200:** ${ref(r.response)}`, "");
   }
-
-  // Include referenced schemas and everything they reference.
   const queue = [...used];
   const include = new Set<string>();
   while (queue.length) {
     const id = queue.pop()!;
     if (include.has(id) || !defs[id]) continue;
     include.add(id);
-    const text = JSON.stringify(defs[id]);
-    for (const m of text.matchAll(/#\/schemas\/(\w+)/g)) queue.push(m[1]);
+    for (const m of JSON.stringify(defs[id]).matchAll(/#\/schemas\/(\w+)/g)) queue.push(m[1]);
   }
   lines.push("## Schemas", "", "`$ref`s point at other schemas in this section.", "");
-  for (const id of [...include].sort()) {
-    lines.push(`### ${id}`, "", "```json", JSON.stringify(defs[id], null, 2), "```", "");
-  }
+  for (const id of [...include].sort()) lines.push(`### ${id}`, "", "```json", JSON.stringify(defs[id], null, 2), "```", "");
   return lines.join("\n");
 }

@@ -1,1528 +1,1231 @@
-# ForgePilot API contract (Phase 1)
+# ForgePilot API contract
 
 > Generated from `lib/mock/handlers.ts` and `lib/schemas`. Do not edit by hand —
 > run `UPDATE_CONTRACT=1 pnpm test` to regenerate. `pnpm test` fails if this file is out of date.
 
-Base URL: `/api/mock` today (set `NEXT_PUBLIC_API_BASE` to point the frontend at the real backend).
-All bodies are JSON. Errors return `{ "error": string, "details"?: unknown }` with 400/401/403/404/409/422.
-Auth: the mock session is the `fp_session` cookie (user id). The real backend should use the identity
-provider of choice; the role rules below must be preserved.
+Base URL: `/api/mock` today (set `NEXT_PUBLIC_API_BASE` for the real backend). JSON bodies.
+Errors: `{ "error": string, "details"?: unknown }` with 400/401/402 (plan limit)/403/404/409/422.
+Auth: mock cookies `fp_session` (user) and `fp_ws` (active workspace). Every route is scoped to the active workspace.
 
-Product rules the backend must enforce (not just the UI):
+Guardrails the backend must enforce (not just the UI):
 
-- Sign-off requires the latest verification `passed` **and** `reviewedDiff: true` (409 otherwise).
-- `open_pr` only after sign-off. Nothing in this API merges: merge happens in the client's Git.
-- Every state-changing action appends a hash-chained `EvidenceRecord` with the correct actor (person, agent or system).
-- Portal users only ever see their own organization's data. Margin is only returned to `fp_manager`.
+- **Tenant isolation:** records from another workspace return 404.
+- **Least privilege:** permissions per route below; viewers are read-only; approvals need the approver role named on the request and requesters can't approve themselves.
+- **No auto-merge:** passing checks set `review_ready`; merge state comes from GitHub.
+- **Loop protection:** fix tasks per bug are capped by `policy.maxFixRetries`; retries are capped too.
+- **Budgets:** with `hardCap`, launches are refused once the monthly budget is used (402).
+- **Commit pinning:** every test run and scan records exact SHAs.
 
 ## Endpoints
 
 | Method | Path | Auth | Request | Response | Summary |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/session` | Any signed-in user | — | `Session` | Current mock session (user, organization) and the personas available in the role switcher. |
-| GET | `/session/personas` | None | — | `User[]` | Personas for the mock sign-in screen. |
-| POST | `/session` | None | `SwitchSessionInput` | `Session` | Switch mock session to another persona (sets the fp_session cookie). |
-| GET | `/overview` | Client portal roles | — | `PortalOverview` | Portal overview: KPIs, 12-week health trend, needs-attention list, recent activity. |
-| GET | `/activity` | Any signed-in user | — | `ActivityItem[]` | Recent evidence events across visible organizations. ?limit= |
-| GET | `/applications` | Any signed-in user | — | `ApplicationSummary[]` | Applications visible to the user. Console may filter ?orgId= |
-| GET | `/applications/:id` | Any signed-in user | — | `ApplicationDetail` | Application detail with health breakdown, history, repositories, findings and tasks. |
-| GET | `/repositories` | Any signed-in user | — | `RepositorySummary[]` | Repositories visible to the user. ?orgId= ?applicationId= |
-| GET | `/repositories/:id` | Any signed-in user | — | `RepositoryDetail` | Repository detail: health, findings, scans, flaky tests, tasks. |
-| POST | `/repositories/:id/scans` | ForgePilot console roles | — | see below | Start a health scan (mock: completes after a few seconds with updated results). |
-| GET | `/tasks` | Any signed-in user | — | `TaskListItem[]` | Tasks visible to the user. Filters: orgId, applicationId, repositoryId, type, state, assigneeUserId, agent, from, to, mine. |
-| POST | `/tasks` | ForgePilot console roles | `NewTaskInput` | `TaskListItem` | Create a task (New task dialog). |
-| GET | `/tasks/:id` | Any signed-in user | — | `TaskDetail` | Task detail: runs, verifications, PR, approvals, evidence (hash-chain checked). |
-| GET | `/tasks/:id/log` | ForgePilot console roles | — | `LiveLog` | Live agent log for the latest run (mock stream: poll every ~1.5s). |
-| GET | `/tasks/:id/diff` | Any signed-in user | — | `DiffFile[]` | Unified diff of the change (files with hunks). |
-| POST | `/tasks/:id/actions` | ForgePilot console roles | `TaskActionInput` | `TaskDetail` | Engineer actions: save_plan, approve_plan, launch, stop, retry, take_over, sign_off, open_pr, escalate, close. Each writes an EvidenceRecord. |
-| POST | `/tasks/:id/approval` | Client portal roles | `ApprovalInput` | `TaskDetail` | Client approves or requests changes on an open PR. Approvers/admins only. Appends an EvidenceRecord. |
-| GET | `/approvals` | Client portal roles | — | `ApprovalQueueItem[]` | PRs waiting for client approval, oldest first, with risk and sign-off. |
-| GET | `/evidence` | Any signed-in user | — | `EvidencePack[]` | Evidence packs (one per task with activity). Filters: applicationId, type, from, to, q. |
-| GET | `/evidence/export` | Any signed-in user | — | see below | Export evidence packs as JSON. ?ids=pack_task_001,pack_task_002 |
-| GET | `/reports/savings` | Any signed-in user | — | `SavingsReport` | Monthly savings report computed from delivered tasks. ?month=YYYY-MM (default: latest) ?orgId= (console) |
-| GET | `/reports/sla` | Any signed-in user | — | `SlaReport` | SLA report: target vs actual per metric, breaches with reasons. ?orgId= (console) |
-| GET | `/clients` | ForgePilot console roles | — | `ClientSummary[]` | Client list. Margin is only included for delivery managers. |
-| GET | `/clients/:id` | ForgePilot console roles | — | `ClientDetail` | Client detail: contract, SLA, applications, contacts, recent tasks, integrations. |
-| GET | `/ops` | fp_manager only | — | `OpsDashboard` | Ops dashboard KPIs and charts (delivery manager only). |
-| GET | `/engineers` | ForgePilot console roles | — | `User[]` | ForgePilot engineers (for assignee pickers). |
-| GET | `/team` | Client portal roles | — | `User[]` | Users in the client organization. |
-| POST | `/team/invite` | Client portal roles | `InviteUserInput` | `User` | Invite a user to the client organization (client_admin only). |
-| GET | `/integrations` | Any signed-in user | — | `IntegrationView[]` | Integration catalog merged with this organization's connections. ?orgId= (console) |
-| POST | `/integrations/:providerId/connect` | Client portal roles | `ConnectIntegrationInput` | `IntegrationView` | Mock OAuth connect for an integration (client_admin only). |
-| POST | `/integrations/:providerId/disconnect` | Client portal roles | — | `Ok` | Disconnect an integration (client_admin only). |
-| GET | `/notifications` | Any signed-in user | — | `NotificationList` | Notifications for the current user's area (portal: their org). |
-| POST | `/notifications/read` | Any signed-in user | see below | `Ok` | Mark notifications read. Body: { ids?: string[] } (omit for all). |
-| GET | `/search` | Any signed-in user | — | `SearchResult[]` | Global search across clients, applications, repositories and tasks. ?q= |
-| GET | `/onboarding/git-repos` | Client portal roles | — | `GitRepoCandidate[]` | Repositories visible after the mock Git OAuth connect. ?provider=&account= |
-| POST | `/onboarding` | Client portal roles | `OnboardingInput` | `OnboardingResult` | Complete onboarding: create organization, contract, applications, repositories and start health scans. |
-| GET | `/onboarding/:orgId/status` | Client portal roles | — | `OnboardingStatus` | Onboarding scan progress and, when done, the health report + 90-day plan. |
-| POST | `/demo/reset` | Any signed-in user | — | `Ok` | Reset all mock data to the seed (demo mode). |
+| GET | `/session/personas` | None | — | see below | Demo personas for the sign-in screen. |
+| GET | `/session` | Any workspace member | — | `SessionInfo` | Current user, active workspace, role, other workspaces and badge counts. |
+| POST | `/session` | None | `SignInInput` | `SessionInfo` | Sign in as a demo persona (sets fp_session and fp_ws cookies). |
+| POST | `/session/workspace` | Any workspace member | `SwitchWorkspaceInput` | `SessionInfo` | Switch the active workspace. |
+| POST | `/signup` | None | `SignUpInput` | `User` | Create an account (mock GitHub OAuth or email). The user then creates a workspace in onboarding. |
+| POST | `/orgs` | None | `CreateWorkspaceInput` | `Organization` | Create a workspace for the signed-in user (owner, Free plan with a 14-day Team trial). |
+| GET | `/github/repositories` | Any workspace member | — | `GithubRepoCandidate[]` | Repositories visible to the GitHub App installation (mock). ?account= |
+| POST | `/github/install` | Permission `repo.connect` | `ConnectIntegrationInput` | `Integration` | Record the GitHub App installation for the workspace (mock). |
+| POST | `/repositories/connect` | Permission `repo.connect` | `ConnectReposInput` | `ConnectReposResult` | Connect selected repositories to a project and start indexing (repository intelligence). |
+| POST | `/repositories/:id/config` | Permission `repo.connect` | `RepoConfigInput` | `Repository` | Confirm discovered test commands and scan schedule. |
+| POST | `/onboarding/first-run` | Permission `test.run` | `FirstRunInput` | `FirstRunResult` | Run the first ShipSafe test run or CodeKeeper scan for a repository. |
+| GET | `/overview` | Any workspace member | — | `Overview` | Workspace overview: North Star, KPIs, lifecycle funnel, attention list, live sessions, activity, setup checklist. |
+| GET | `/projects` | Any workspace member | — | `ProjectSummary[]` | Projects with health, PR, session and finding counts. |
+| POST | `/projects` | Permission `repo.connect` | `NewProjectInput` | `Project` | Create a project. |
+| GET | `/projects/:id` | Any workspace member | — | `ProjectDetail` | Project detail: repositories, tasks, PRs, runs and findings. |
+| GET | `/repositories` | Any workspace member | — | `RepositorySummary[]` | Connected repositories. ?projectId= |
+| GET | `/repositories/:id` | Any workspace member | — | `RepositoryDetail` | Repository detail: suites, findings, health history, scans, runs, PRs. |
+| POST | `/repositories/:id/scans` | Permission `test.run` | — | `Scan` | Start a CodeKeeper scan of the repository. |
+| GET | `/devpilot/overview` | Any workspace member | — | `DevPilotOverview` | DevPilot command centre: KPIs, board, live sessions, agents. |
+| GET | `/tasks` | Any workspace member | — | `TaskListItem[]` | Tasks. Filters: status, projectId, repositoryId, source, agentId, q. |
+| POST | `/tasks` | Permission `task.create` | `NewTaskInput` | `Task` | Create a task (optionally launch it). Validates policy, agent and budget. |
+| GET | `/tasks/:id` | Any workspace member | — | `TaskDetail` | Task detail: sessions, approvals, PR, verification runs, linked bug/finding, lifecycle, activity, policy preview. |
+| POST | `/tasks/:id/actions` | Permission `task.launch` | `TaskActionInput` | `TaskDetail` | launch \| cancel \| retry \| archive. Enforces the task state machine, retry cap and budget hard cap. |
+| GET | `/sessions` | Any workspace member | — | `SessionListItem[]` | Agent sessions. ?status= |
+| GET | `/sessions/:id` | Any workspace member | — | `SessionDetail` | Session detail with workspace, approvals and other attempts. |
+| GET | `/sessions/:id/log` | Any workspace member | — | `LiveLog` | Structured, secret-redacted session log (poll every ~1.2s while running). |
+| GET | `/sessions/:id/diff` | Any workspace member | — | `DiffFile[]` | Changed files with hunks for the session's commit. |
+| POST | `/sessions/:id/cancel` | Permission `task.cancel` | — | `SessionListItem` | Cancel an active session; the worker is terminated and the workspace cleaned up. |
+| GET | `/workspaces` | Any workspace member | — | see below | Isolated execution workspaces (one per session). |
+| GET | `/agents` | Any workspace member | — | `Agent[]` | Configured coding-agent runtimes. |
+| POST | `/agents/:id` | Permission `agent.manage` | see below | `Agent` | Update or suspend an agent runtime. |
+| GET | `/shipsafe/overview` | Any workspace member | — | `ShipSafeOverview` | Testing dashboard: pass-rate trend, KPIs, failure classes, repositories, recent runs, open bugs. |
+| GET | `/test-suites` | Any workspace member | — | see below | Test suites. ?repositoryId= |
+| POST | `/test-suites` | Permission `suite.manage` | `TestSuiteInput` | `TestSuite` | Create a test suite. |
+| POST | `/test-suites/:id` | Permission `suite.manage` | `TestSuitePatch` | `TestSuite` | Update a test suite (enable/disable, required, command, timeout). |
+| GET | `/test-runs` | Any workspace member | — | `TestRunListItem[]` | Test runs. ?repositoryId= &status= &pullRequestId= &trigger= |
+| POST | `/test-runs` | Permission `test.run` | `NewTestRunInput` | `TestRun` | Start a manual test run on a branch. |
+| GET | `/test-runs/:id` | Any workspace member | — | `TestRunDetail` | Run detail: environment, commit pins, test plan with reasons, results, evidence, comparison with the previous run, worker log. |
+| POST | `/test-runs/:id/rerun` | Permission `test.run` | — | `TestRun` | Rerun with the same commit pin (infra failures rerun free). |
+| GET | `/bugs` | Any workspace member | — | `BugListItem[]` | Bugs from ShipSafe failures. ?status= &severity= |
+| GET | `/bugs/:id` | Any workspace member | — | `BugDetail` | Bug detail with the failing result, evidence, run, PR and fix task. |
+| POST | `/bugs/:id/actions` | Permission `bug.manage` | `BugActionInput` | `BugDetail` | create_fix_task (SS-012: preserves commit, logs and context; capped retries) \| resolve \| wont_fix \| reopen. |
+| GET | `/pull-requests` | Any workspace member | — | `PullRequestListItem[]` | Pull requests (agent and human) with verification status. ?status= &author=agent\|person &repositoryId= &filter=review |
+| GET | `/pull-requests/:id` | Any workspace member | — | `PullRequestDetail` | PR verification detail: runs, results, bugs, release policy and merge blockers. |
+| GET | `/pull-requests/:id/diff` | Any workspace member | — | `DiffFile[]` | Diff for the PR head. |
+| POST | `/pull-requests/:id/review` | Permission `pr.review` | `ReviewInput` | `PullRequestDetail` | Record a human review (mirrors the GitHub review). |
+| POST | `/pull-requests/:id/merge` | Permission `pr.review` | — | `PullRequestDetail` | Demo only: simulate the GitHub merge webhook. Refused while required checks or review are missing. |
+| GET | `/codekeeper/overview` | Any workspace member | — | `CodeKeeperOverview` | Repository health: average and trend, per-repository scores, findings breakdown, scans, maintenance PR acceptance, prioritised queue. |
+| GET | `/dependencies` | Any workspace member | — | see below | Dependency inventory. ?repositoryId= &q= &filter=outdated\|vulnerable |
+| GET | `/findings` | Any workspace member | — | `FindingListItem[]` | Maintenance findings. ?status= &severity= &category= &repositoryId= |
+| GET | `/findings/:id` | Any workspace member | — | `FindingDetail` | Finding detail with advisory evidence, dependency and linked task. |
+| POST | `/findings/:id/actions` | Permission `finding.create_task` | `FindingActionInput` | `FindingDetail` | create_task (policy-validated DevPilot maintenance task) \| suppress (reason + expiry, admins) \| unsuppress. |
+| GET | `/approvals` | Any workspace member | — | see below | Approval centre. ?status= |
+| POST | `/approvals/:id/decision` | Permission `approval.decide` | `ApprovalDecisionInput` | `Approval` | Approve or reject. Bound to the exact action and context; requester can't approve their own request. |
+| POST | `/sessions/:id/input` | Permission `task.launch` | `SessionInput` | `SessionListItem` | Answer an agent's clarification question and resume the session. |
+| GET | `/analytics` | Any workspace member | — | `Analytics` | Analytics (30/90 days): North Star, task success by type, providers (task-mix caveat), PR acceptance, test usefulness, cost per verified task. |
+| GET | `/integrations` | Any workspace member | — | `IntegrationView[]` | Integration catalogue merged with this workspace's connections. |
+| POST | `/integrations/:providerId/connect` | Permission `integration.manage` | `ConnectIntegrationInput` | `Integration` | Connect (mock OAuth / API key) an integration. Credentials live in the vault; only a reference is stored. |
+| POST | `/integrations/:providerId/disconnect` | Permission `integration.manage` | — | `Ok` | Disconnect and revoke an integration. |
+| POST | `/workspace` | Permission `workspace.manage` | `WorkspacePatch` | `Organization` | Rename the workspace. |
+| GET | `/members` | Any workspace member | — | `Members` | Members, pending invitations and seats. |
+| POST | `/members/invite` | Permission `member.manage` | `InviteInput` | `Invitation` | Invite a member (respects the plan's seat limit). |
+| POST | `/invitations/:id/revoke` | Permission `member.manage` | — | `Ok` | Revoke a pending invitation. |
+| POST | `/members/:userId/role` | Permission `member.manage` | `RoleChangeInput` | `Ok` | Change a member's role. Only owners can grant or remove owner; the last owner can't be demoted. |
+| POST | `/members/:userId/remove` | Permission `member.manage` | — | `Ok` | Remove a member from the workspace. |
+| GET | `/policy` | Any workspace member | — | `Policy` | Workspace policies: providers, protected paths, network, required checks, approval rules, retention. |
+| POST | `/policy` | Permission `policy.manage` | `PolicyPatch` | `Policy` | Update workspace policies (Team plan and above). |
+| GET | `/api-keys` | Any workspace member | — | `ApiKey[]` | API keys (prefix only; secrets are shown once at creation). |
+| POST | `/api-keys` | Permission `apikey.manage` | `ApiKeyInput` | `ApiKeyCreated` | Create an API key. The secret is returned once. |
+| POST | `/api-keys/:id/revoke` | Permission `apikey.manage` | — | `Ok` | Revoke an API key immediately. |
+| GET | `/audit-logs` | Any workspace member | — | `ActivityItem[]` | Audit log of user, agent and system actions. ?actorType= &q= &limit= |
+| GET | `/plans` | None | — | `Plan[]` | Public plan catalogue (pricing page). |
+| GET | `/billing` | Any workspace member | — | `Billing` | Plan, metered usage vs quota, projected spend, budget, cost breakdowns and invoices. |
+| POST | `/billing/plan` | Permission `billing.manage` | `ChangePlanInput` | `Billing` | Change plan or billing cycle (mock checkout). Enterprise is sales-assisted. |
+| POST | `/billing/budget` | Permission `billing.manage` | `BudgetInput` | `Billing` | Set the monthly execution budget, hard cap and alert thresholds. |
+| GET | `/notifications` | Any workspace member | — | `Notification[]` | Notifications for the active workspace. |
+| POST | `/notifications/read` | Any workspace member | see below | `Ok` | Mark notifications read. Body { ids?: string[] }. |
+| GET | `/search` | Any workspace member | — | `SearchResult[]` | Search projects, repositories, tasks, PRs, bugs, findings and sessions. ?q= |
+| POST | `/demo/reset` | None | — | `Ok` | Reset all mock data to the seed (demo mode). |
 
 ## Endpoint details
 
-### GET `/session`
-
-Current mock session (user, organization) and the personas available in the role switcher.
-
-- **Auth:** Any signed-in user
-- **Response 200:** [`Session`](#session)
-
 ### GET `/session/personas`
 
-Personas for the mock sign-in screen.
+Demo personas for the sign-in screen.
 
 - **Auth:** None
-- **Response 200:** [`User[]`](#user)
+- **Response 200:** 
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "email": {
+        "type": "string",
+        "format": "email",
+        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+      },
+      "title": {
+        "default": "",
+        "type": "string"
+      },
+      "githubLogin": {
+        "type": "string"
+      },
+      "workspaces": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "orgId": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "owner",
+                "admin",
+                "member",
+                "viewer"
+              ]
+            }
+          },
+          "required": [
+            "orgId",
+            "name",
+            "role"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "id",
+      "name",
+      "email",
+      "title",
+      "workspaces"
+    ],
+    "additionalProperties": false
+  }
+}
+```
+
+### GET `/session`
+
+Current user, active workspace, role, other workspaces and badge counts.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`SessionInfo`](#sessioninfo)
 
 ### POST `/session`
 
-Switch mock session to another persona (sets the fp_session cookie).
+Sign in as a demo persona (sets fp_session and fp_ws cookies).
 
 - **Auth:** None
-- **Request body:** [`SwitchSessionInput`](#switchsessioninput)
-- **Response 200:** [`Session`](#session)
+- **Request body:** [`SignInInput`](#signininput)
+- **Response 200:** [`SessionInfo`](#sessioninfo)
+
+### POST `/session/workspace`
+
+Switch the active workspace.
+
+- **Auth:** Any workspace member
+- **Request body:** [`SwitchWorkspaceInput`](#switchworkspaceinput)
+- **Response 200:** [`SessionInfo`](#sessioninfo)
+
+### POST `/signup`
+
+Create an account (mock GitHub OAuth or email). The user then creates a workspace in onboarding.
+
+- **Auth:** None
+- **Request body:** [`SignUpInput`](#signupinput)
+- **Response 200:** [`User`](#user)
+
+### POST `/orgs`
+
+Create a workspace for the signed-in user (owner, Free plan with a 14-day Team trial).
+
+- **Auth:** None
+- **Request body:** [`CreateWorkspaceInput`](#createworkspaceinput)
+- **Response 200:** [`Organization`](#organization)
+
+### GET `/github/repositories`
+
+Repositories visible to the GitHub App installation (mock). ?account=
+
+- **Auth:** Any workspace member
+- **Response 200:** [`GithubRepoCandidate[]`](#githubrepocandidate)
+
+### POST `/github/install`
+
+Record the GitHub App installation for the workspace (mock).
+
+- **Auth:** Permission `repo.connect`
+- **Request body:** [`ConnectIntegrationInput`](#connectintegrationinput)
+- **Response 200:** [`Integration`](#integration)
+
+### POST `/repositories/connect`
+
+Connect selected repositories to a project and start indexing (repository intelligence).
+
+- **Auth:** Permission `repo.connect`
+- **Request body:** [`ConnectReposInput`](#connectreposinput)
+- **Response 200:** [`ConnectReposResult`](#connectreposresult)
+
+### POST `/repositories/:id/config`
+
+Confirm discovered test commands and scan schedule.
+
+- **Auth:** Permission `repo.connect`
+- **Request body:** [`RepoConfigInput`](#repoconfiginput)
+- **Response 200:** [`Repository`](#repository)
+
+### POST `/onboarding/first-run`
+
+Run the first ShipSafe test run or CodeKeeper scan for a repository.
+
+- **Auth:** Permission `test.run`
+- **Request body:** [`FirstRunInput`](#firstruninput)
+- **Response 200:** [`FirstRunResult`](#firstrunresult)
 
 ### GET `/overview`
 
-Portal overview: KPIs, 12-week health trend, needs-attention list, recent activity.
+Workspace overview: North Star, KPIs, lifecycle funnel, attention list, live sessions, activity, setup checklist.
 
-- **Auth:** Client portal roles
-- **Response 200:** [`PortalOverview`](#portaloverview)
+- **Auth:** Any workspace member
+- **Response 200:** [`Overview`](#overview)
 
-### GET `/activity`
+### GET `/projects`
 
-Recent evidence events across visible organizations. ?limit=
+Projects with health, PR, session and finding counts.
 
-- **Auth:** Any signed-in user
-- **Response 200:** [`ActivityItem[]`](#activityitem)
+- **Auth:** Any workspace member
+- **Response 200:** [`ProjectSummary[]`](#projectsummary)
 
-### GET `/applications`
+### POST `/projects`
 
-Applications visible to the user. Console may filter ?orgId=
+Create a project.
 
-- **Auth:** Any signed-in user
-- **Response 200:** [`ApplicationSummary[]`](#applicationsummary)
+- **Auth:** Permission `repo.connect`
+- **Request body:** [`NewProjectInput`](#newprojectinput)
+- **Response 200:** [`Project`](#project)
 
-### GET `/applications/:id`
+### GET `/projects/:id`
 
-Application detail with health breakdown, history, repositories, findings and tasks.
+Project detail: repositories, tasks, PRs, runs and findings.
 
-- **Auth:** Any signed-in user
-- **Response 200:** [`ApplicationDetail`](#applicationdetail)
+- **Auth:** Any workspace member
+- **Response 200:** [`ProjectDetail`](#projectdetail)
 
 ### GET `/repositories`
 
-Repositories visible to the user. ?orgId= ?applicationId=
+Connected repositories. ?projectId=
 
-- **Auth:** Any signed-in user
+- **Auth:** Any workspace member
 - **Response 200:** [`RepositorySummary[]`](#repositorysummary)
 
 ### GET `/repositories/:id`
 
-Repository detail: health, findings, scans, flaky tests, tasks.
+Repository detail: suites, findings, health history, scans, runs, PRs.
 
-- **Auth:** Any signed-in user
+- **Auth:** Any workspace member
 - **Response 200:** [`RepositoryDetail`](#repositorydetail)
 
 ### POST `/repositories/:id/scans`
 
-Start a health scan (mock: completes after a few seconds with updated results).
+Start a CodeKeeper scan of the repository.
 
-- **Auth:** ForgePilot console roles
-- **Response 200:** ```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "properties": {
-    "scanId": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "scanId"
-  ],
-  "additionalProperties": false
-}
-```
+- **Auth:** Permission `test.run`
+- **Response 200:** [`Scan`](#scan)
+
+### GET `/devpilot/overview`
+
+DevPilot command centre: KPIs, board, live sessions, agents.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`DevPilotOverview`](#devpilotoverview)
 
 ### GET `/tasks`
 
-Tasks visible to the user. Filters: orgId, applicationId, repositoryId, type, state, assigneeUserId, agent, from, to, mine.
+Tasks. Filters: status, projectId, repositoryId, source, agentId, q.
 
-- **Auth:** Any signed-in user
+- **Auth:** Any workspace member
 - **Response 200:** [`TaskListItem[]`](#tasklistitem)
 
 ### POST `/tasks`
 
-Create a task (New task dialog).
+Create a task (optionally launch it). Validates policy, agent and budget.
 
-- **Auth:** ForgePilot console roles
+- **Auth:** Permission `task.create`
 - **Request body:** [`NewTaskInput`](#newtaskinput)
-- **Response 200:** [`TaskListItem`](#tasklistitem)
+- **Response 200:** [`Task`](#task)
 
 ### GET `/tasks/:id`
 
-Task detail: runs, verifications, PR, approvals, evidence (hash-chain checked).
+Task detail: sessions, approvals, PR, verification runs, linked bug/finding, lifecycle, activity, policy preview.
 
-- **Auth:** Any signed-in user
+- **Auth:** Any workspace member
 - **Response 200:** [`TaskDetail`](#taskdetail)
-
-### GET `/tasks/:id/log`
-
-Live agent log for the latest run (mock stream: poll every ~1.5s).
-
-- **Auth:** ForgePilot console roles
-- **Response 200:** [`LiveLog`](#livelog)
-
-### GET `/tasks/:id/diff`
-
-Unified diff of the change (files with hunks).
-
-- **Auth:** Any signed-in user
-- **Response 200:** [`DiffFile[]`](#difffile)
 
 ### POST `/tasks/:id/actions`
 
-Engineer actions: save_plan, approve_plan, launch, stop, retry, take_over, sign_off, open_pr, escalate, close. Each writes an EvidenceRecord.
+launch | cancel | retry | archive. Enforces the task state machine, retry cap and budget hard cap.
 
-- **Auth:** ForgePilot console roles
+- **Auth:** Permission `task.launch`
 - **Request body:** [`TaskActionInput`](#taskactioninput)
 - **Response 200:** [`TaskDetail`](#taskdetail)
 
-### POST `/tasks/:id/approval`
+### GET `/sessions`
 
-Client approves or requests changes on an open PR. Approvers/admins only. Appends an EvidenceRecord.
+Agent sessions. ?status=
 
-- **Auth:** Client portal roles
-- **Request body:** [`ApprovalInput`](#approvalinput)
-- **Response 200:** [`TaskDetail`](#taskdetail)
+- **Auth:** Any workspace member
+- **Response 200:** [`SessionListItem[]`](#sessionlistitem)
 
-### GET `/approvals`
+### GET `/sessions/:id`
 
-PRs waiting for client approval, oldest first, with risk and sign-off.
+Session detail with workspace, approvals and other attempts.
 
-- **Auth:** Client portal roles
-- **Response 200:** [`ApprovalQueueItem[]`](#approvalqueueitem)
+- **Auth:** Any workspace member
+- **Response 200:** [`SessionDetail`](#sessiondetail)
 
-### GET `/evidence`
+### GET `/sessions/:id/log`
 
-Evidence packs (one per task with activity). Filters: applicationId, type, from, to, q.
+Structured, secret-redacted session log (poll every ~1.2s while running).
 
-- **Auth:** Any signed-in user
-- **Response 200:** [`EvidencePack[]`](#evidencepack)
+- **Auth:** Any workspace member
+- **Response 200:** [`LiveLog`](#livelog)
 
-### GET `/evidence/export`
+### GET `/sessions/:id/diff`
 
-Export evidence packs as JSON. ?ids=pack_task_001,pack_task_002
+Changed files with hunks for the session's commit.
 
-- **Auth:** Any signed-in user
-- **Response 200:** ```json
+- **Auth:** Any workspace member
+- **Response 200:** [`DiffFile[]`](#difffile)
+
+### POST `/sessions/:id/cancel`
+
+Cancel an active session; the worker is terminated and the workspace cleaned up.
+
+- **Auth:** Permission `task.cancel`
+- **Response 200:** [`SessionListItem`](#sessionlistitem)
+
+### GET `/workspaces`
+
+Isolated execution workspaces (one per session).
+
+- **Auth:** Any workspace member
+- **Response 200:** 
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "sessionId": {
+        "type": "string"
+      },
+      "orgId": {
+        "type": "string"
+      },
+      "runtime": {
+        "type": "string",
+        "enum": [
+          "container",
+          "worktree"
+        ]
+      },
+      "image": {
+        "type": "string"
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "provisioning",
+          "active",
+          "cleaned"
+        ]
+      },
+      "cpu": {
+        "type": "number"
+      },
+      "memoryGb": {
+        "type": "number"
+      },
+      "diskGb": {
+        "type": "number"
+      },
+      "networkPolicy": {
+        "type": "string",
+        "enum": [
+          "none",
+          "allowlist",
+          "open"
+        ]
+      },
+      "createdAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+      },
+      "cleanupAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+      },
+      "credentials": {
+        "type": "string"
+      },
+      "baseSha": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{7,40}$"
+      },
+      "branch": {
+        "type": "string"
+      },
+      "taskTitle": {
+        "type": "string"
+      },
+      "sessionStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "waiting",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "repositoryName": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "sessionId",
+      "orgId",
+      "runtime",
+      "image",
+      "state",
+      "cpu",
+      "memoryGb",
+      "diskGb",
+      "networkPolicy",
+      "createdAt",
+      "cleanupAt",
+      "credentials",
+      "baseSha",
+      "branch",
+      "taskTitle",
+      "sessionStatus",
+      "repositoryName"
+    ],
+    "additionalProperties": false
+  }
+}
+```
+
+### GET `/agents`
+
+Configured coding-agent runtimes.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`Agent[]`](#agent)
+
+### POST `/agents/:id`
+
+Update or suspend an agent runtime.
+
+- **Auth:** Permission `agent.manage`
+- **Request body:** 
+
+```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
-    "exportedAt": {
-      "type": "string"
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "suspended"
+      ]
     },
-    "exportedBy": {
-      "type": "string"
+    "maxConcurrent": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
     },
-    "packs": {
-      "type": "array",
-      "items": {
+    "defaultBudgetUsd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "defaultTimeoutMin": {
+      "type": "number",
+      "minimum": 5
+    }
+  },
+  "additionalProperties": false
+}
+```
+- **Response 200:** [`Agent`](#agent)
+
+### GET `/shipsafe/overview`
+
+Testing dashboard: pass-rate trend, KPIs, failure classes, repositories, recent runs, open bugs.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`ShipSafeOverview`](#shipsafeoverview)
+
+### GET `/test-suites`
+
+Test suites. ?repositoryId=
+
+- **Auth:** Any workspace member
+- **Response 200:** 
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "repositoryId": {
+        "type": "string"
+      },
+      "orgId": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "type": {
+        "type": "string",
+        "enum": [
+          "unit",
+          "playwright",
+          "api"
+        ]
+      },
+      "command": {
+        "type": "string"
+      },
+      "environment": {
+        "type": "string"
+      },
+      "pathRules": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "timeoutMin": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "owner": {
+        "type": "string"
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "required": {
+        "type": "boolean"
+      },
+      "flakyRatePct": {
+        "type": "number",
+        "minimum": 0
+      },
+      "testCount": {
+        "type": "integer",
+        "minimum": -9007199254740991,
+        "maximum": 9007199254740991
+      },
+      "repositoryName": {
+        "type": "string"
+      },
+      "lastStatus": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "id",
+      "repositoryId",
+      "orgId",
+      "name",
+      "type",
+      "command",
+      "environment",
+      "pathRules",
+      "timeoutMin",
+      "owner",
+      "enabled",
+      "required",
+      "flakyRatePct",
+      "testCount",
+      "repositoryName",
+      "lastStatus"
+    ],
+    "additionalProperties": false
+  }
+}
+```
+
+### POST `/test-suites`
+
+Create a test suite.
+
+- **Auth:** Permission `suite.manage`
+- **Request body:** [`TestSuiteInput`](#testsuiteinput)
+- **Response 200:** [`TestSuite`](#testsuite)
+
+### POST `/test-suites/:id`
+
+Update a test suite (enable/disable, required, command, timeout).
+
+- **Auth:** Permission `suite.manage`
+- **Request body:** [`TestSuitePatch`](#testsuitepatch)
+- **Response 200:** [`TestSuite`](#testsuite)
+
+### GET `/test-runs`
+
+Test runs. ?repositoryId= &status= &pullRequestId= &trigger=
+
+- **Auth:** Any workspace member
+- **Response 200:** [`TestRunListItem[]`](#testrunlistitem)
+
+### POST `/test-runs`
+
+Start a manual test run on a branch.
+
+- **Auth:** Permission `test.run`
+- **Request body:** [`NewTestRunInput`](#newtestruninput)
+- **Response 200:** [`TestRun`](#testrun)
+
+### GET `/test-runs/:id`
+
+Run detail: environment, commit pins, test plan with reasons, results, evidence, comparison with the previous run, worker log.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`TestRunDetail`](#testrundetail)
+
+### POST `/test-runs/:id/rerun`
+
+Rerun with the same commit pin (infra failures rerun free).
+
+- **Auth:** Permission `test.run`
+- **Response 200:** [`TestRun`](#testrun)
+
+### GET `/bugs`
+
+Bugs from ShipSafe failures. ?status= &severity=
+
+- **Auth:** Any workspace member
+- **Response 200:** [`BugListItem[]`](#buglistitem)
+
+### GET `/bugs/:id`
+
+Bug detail with the failing result, evidence, run, PR and fix task.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`BugDetail`](#bugdetail)
+
+### POST `/bugs/:id/actions`
+
+create_fix_task (SS-012: preserves commit, logs and context; capped retries) | resolve | wont_fix | reopen.
+
+- **Auth:** Permission `bug.manage`
+- **Request body:** [`BugActionInput`](#bugactioninput)
+- **Response 200:** [`BugDetail`](#bugdetail)
+
+### GET `/pull-requests`
+
+Pull requests (agent and human) with verification status. ?status= &author=agent|person &repositoryId= &filter=review
+
+- **Auth:** Any workspace member
+- **Response 200:** [`PullRequestListItem[]`](#pullrequestlistitem)
+
+### GET `/pull-requests/:id`
+
+PR verification detail: runs, results, bugs, release policy and merge blockers.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`PullRequestDetail`](#pullrequestdetail)
+
+### GET `/pull-requests/:id/diff`
+
+Diff for the PR head.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`DiffFile[]`](#difffile)
+
+### POST `/pull-requests/:id/review`
+
+Record a human review (mirrors the GitHub review).
+
+- **Auth:** Permission `pr.review`
+- **Request body:** [`ReviewInput`](#reviewinput)
+- **Response 200:** [`PullRequestDetail`](#pullrequestdetail)
+
+### POST `/pull-requests/:id/merge`
+
+Demo only: simulate the GitHub merge webhook. Refused while required checks or review are missing.
+
+- **Auth:** Permission `pr.review`
+- **Response 200:** [`PullRequestDetail`](#pullrequestdetail)
+
+### GET `/codekeeper/overview`
+
+Repository health: average and trend, per-repository scores, findings breakdown, scans, maintenance PR acceptance, prioritised queue.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`CodeKeeperOverview`](#codekeeperoverview)
+
+### GET `/dependencies`
+
+Dependency inventory. ?repositoryId= &q= &filter=outdated|vulnerable
+
+- **Auth:** Any workspace member
+- **Response 200:** 
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "repositoryId": {
+        "type": "string"
+      },
+      "orgId": {
+        "type": "string"
+      },
+      "ecosystem": {
+        "type": "string",
+        "enum": [
+          "npm",
+          "pypi"
+        ]
+      },
+      "name": {
+        "type": "string"
+      },
+      "installedVersion": {
+        "type": "string"
+      },
+      "latestVersion": {
+        "type": "string"
+      },
+      "direct": {
+        "type": "boolean"
+      },
+      "license": {
+        "type": "string"
+      },
+      "manifest": {
+        "type": "string"
+      },
+      "repositoryName": {
+        "type": "string"
+      },
+      "outdated": {
+        "type": "boolean"
+      },
+      "vulnerable": {
+        "type": "boolean"
+      },
+      "majorBehind": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "id",
+      "repositoryId",
+      "orgId",
+      "ecosystem",
+      "name",
+      "installedVersion",
+      "latestVersion",
+      "direct",
+      "license",
+      "manifest",
+      "repositoryName",
+      "outdated",
+      "vulnerable",
+      "majorBehind"
+    ],
+    "additionalProperties": false
+  }
+}
+```
+
+### GET `/findings`
+
+Maintenance findings. ?status= &severity= &category= &repositoryId=
+
+- **Auth:** Any workspace member
+- **Response 200:** [`FindingListItem[]`](#findinglistitem)
+
+### GET `/findings/:id`
+
+Finding detail with advisory evidence, dependency and linked task.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`FindingDetail`](#findingdetail)
+
+### POST `/findings/:id/actions`
+
+create_task (policy-validated DevPilot maintenance task) | suppress (reason + expiry, admins) | unsuppress.
+
+- **Auth:** Permission `finding.create_task`
+- **Request body:** [`FindingActionInput`](#findingactioninput)
+- **Response 200:** [`FindingDetail`](#findingdetail)
+
+### GET `/approvals`
+
+Approval centre. ?status=
+
+- **Auth:** Any workspace member
+- **Response 200:** 
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "orgId": {
+        "type": "string"
+      },
+      "action": {
+        "type": "string",
+        "enum": [
+          "modify_protected_path",
+          "access_secret",
+          "run_migration",
+          "network_egress",
+          "budget_increase",
+          "create_pull_request",
+          "deploy_production"
+        ]
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected",
+          "expired"
+        ]
+      },
+      "title": {
+        "type": "string"
+      },
+      "context": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      },
+      "requestedBy": {
         "type": "object",
         "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "person",
+              "agent"
+            ]
+          },
           "id": {
             "type": "string"
           },
-          "task": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "repositoryId": {
-                "type": "string"
-              },
-              "applicationId": {
-                "type": "string"
-              },
-              "orgId": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "dependency_upgrade",
-                  "cve_patch",
-                  "bug_fix",
-                  "enhancement",
-                  "test_coverage"
-                ]
-              },
-              "title": {
-                "type": "string"
-              },
-              "summary": {
-                "type": "string"
-              },
-              "source": {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "ticket",
-                      "scan",
-                      "manual"
-                    ]
-                  },
-                  "ref": {
-                    "type": "string"
-                  },
-                  "url": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "ref"
-                ],
-                "additionalProperties": false
-              },
-              "state": {
-                "type": "string",
-                "enum": [
-                  "created",
-                  "planned",
-                  "plan_approved",
-                  "running",
-                  "verifying",
-                  "retrying",
-                  "escalated",
-                  "awaiting_review",
-                  "signed_off",
-                  "pr_open",
-                  "client_approved",
-                  "merged",
-                  "closed",
-                  "failed",
-                  "rejected"
-                ]
-              },
-              "priority": {
-                "type": "string",
-                "enum": [
-                  "p0",
-                  "p1",
-                  "p2",
-                  "p3"
-                ]
-              },
-              "slaDueAt": {
-                "type": "string",
-                "format": "date-time",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-              },
-              "assigneeUserId": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "agent": {
-                "type": "string",
-                "enum": [
-                  "claude_code",
-                  "codex",
-                  "devin"
-                ]
-              },
-              "createdAt": {
-                "type": "string",
-                "format": "date-time",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-              },
-              "aiAuthoredPct": {
-                "type": "number",
-                "minimum": 0,
-                "maximum": 100
-              },
-              "plan": {
-                "type": "object",
-                "properties": {
-                  "steps": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "acceptanceCriteria": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "approvedBy": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "steps",
-                  "acceptanceCriteria",
-                  "approvedBy"
-                ],
-                "additionalProperties": false
-              },
-              "estimatedHours": {
-                "type": "number",
-                "minimum": 0
-              },
-              "escalationReason": {
-                "type": "string"
-              },
-              "manualTakeoverBy": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "applicationName": {
-                "type": "string"
-              },
-              "organizationName": {
-                "type": "string"
-              },
-              "repositoryName": {
-                "type": "string"
-              },
-              "assignee": {
-                "anyOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "type": "string"
-                      },
-                      "name": {
-                        "type": "string"
-                      },
-                      "email": {
-                        "type": "string",
-                        "format": "email",
-                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
-                      },
-                      "role": {
-                        "type": "string",
-                        "enum": [
-                          "client_admin",
-                          "client_approver",
-                          "client_viewer",
-                          "fp_engineer",
-                          "fp_manager"
-                        ]
-                      },
-                      "orgId": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "title": {
-                        "type": "string"
-                      },
-                      "status": {
-                        "default": "active",
-                        "type": "string",
-                        "enum": [
-                          "active",
-                          "invited"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "id",
-                      "name",
-                      "email",
-                      "role",
-                      "orgId",
-                      "status"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "latestRun": {
-                "anyOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "type": "string"
-                      },
-                      "taskId": {
-                        "type": "string"
-                      },
-                      "attempt": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude_code",
-                          "codex",
-                          "devin"
-                        ]
-                      },
-                      "model": {
-                        "type": "string"
-                      },
-                      "modelVersion": {
-                        "type": "string"
-                      },
-                      "tokens": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "costUsd": {
-                        "type": "number",
-                        "minimum": 0
-                      },
-                      "durationSec": {
-                        "anyOf": [
-                          {
-                            "type": "number",
-                            "minimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      },
-                      "outcome": {
-                        "type": "string",
-                        "enum": [
-                          "running",
-                          "success",
-                          "verification_failed",
-                          "stopped",
-                          "error"
-                        ]
-                      },
-                      "startedAt": {
-                        "type": "string",
-                        "format": "date-time",
-                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                      },
-                      "notes": {
-                        "type": "string"
-                      },
-                      "simulatedEndsAt": {
-                        "type": "number"
-                      },
-                      "simulateFailure": {
-                        "type": "boolean"
-                      }
-                    },
-                    "required": [
-                      "id",
-                      "taskId",
-                      "attempt",
-                      "agent",
-                      "model",
-                      "tokens",
-                      "costUsd",
-                      "durationSec",
-                      "outcome",
-                      "startedAt"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "latestVerification": {
-                "anyOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "type": "string"
-                      },
-                      "agentRunId": {
-                        "type": "string"
-                      },
-                      "testsRun": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "testsPassed": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "testsFailed": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "securityFindings": {
-                        "type": "object",
-                        "properties": {
-                          "critical": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          "high": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          "medium": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
-                          }
-                        },
-                        "required": [
-                          "critical",
-                          "high",
-                          "medium"
-                        ],
-                        "additionalProperties": false
-                      },
-                      "riskScore": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                      },
-                      "status": {
-                        "type": "string",
-                        "enum": [
-                          "running",
-                          "passed",
-                          "failed"
-                        ]
-                      },
-                      "durationMin": {
-                        "type": "number",
-                        "minimum": 0
-                      },
-                      "startedAt": {
-                        "type": "string",
-                        "format": "date-time",
-                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                      },
-                      "coveragePct": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                      },
-                      "testResults": {
-                        "default": [],
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "name": {
-                              "type": "string"
-                            },
-                            "suite": {
-                              "type": "string"
-                            },
-                            "status": {
-                              "type": "string",
-                              "enum": [
-                                "passed",
-                                "failed",
-                                "skipped"
-                              ]
-                            },
-                            "durationMs": {
-                              "type": "number",
-                              "minimum": 0
-                            },
-                            "flaky": {
-                              "default": false,
-                              "type": "boolean"
-                            }
-                          },
-                          "required": [
-                            "name",
-                            "suite",
-                            "status",
-                            "durationMs",
-                            "flaky"
-                          ],
-                          "additionalProperties": false
-                        }
-                      },
-                      "artifacts": {
-                        "default": [],
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "kind": {
-                              "type": "string",
-                              "enum": [
-                                "screenshot",
-                                "log",
-                                "sbom",
-                                "report"
-                              ]
-                            },
-                            "label": {
-                              "type": "string"
-                            },
-                            "url": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "kind",
-                            "label",
-                            "url"
-                          ],
-                          "additionalProperties": false
-                        }
-                      },
-                      "scanners": {
-                        "default": [],
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      }
-                    },
-                    "required": [
-                      "id",
-                      "agentRunId",
-                      "testsRun",
-                      "testsPassed",
-                      "testsFailed",
-                      "securityFindings",
-                      "riskScore",
-                      "status",
-                      "durationMin",
-                      "testResults",
-                      "artifacts",
-                      "scanners"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "pullRequest": {
-                "anyOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "type": "string"
-                      },
-                      "taskId": {
-                        "type": "string"
-                      },
-                      "number": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "url": {
-                        "type": "string",
-                        "format": "uri"
-                      },
-                      "status": {
-                        "type": "string",
-                        "enum": [
-                          "open",
-                          "merged",
-                          "closed"
-                        ]
-                      },
-                      "aiAuthoredPct": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                      },
-                      "openedAt": {
-                        "type": "string",
-                        "format": "date-time",
-                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                      }
-                    },
-                    "required": [
-                      "id",
-                      "taskId",
-                      "number",
-                      "url",
-                      "status",
-                      "aiAuthoredPct",
-                      "openedAt"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "slaRisk": {
-                "type": "string",
-                "enum": [
-                  "ok",
-                  "at_risk",
-                  "breached",
-                  "met",
-                  "missed"
-                ]
-              },
-              "lastEvent": {
-                "anyOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "type": "string"
-                      },
-                      "taskId": {
-                        "type": "string"
-                      },
-                      "event": {
-                        "type": "string",
-                        "enum": [
-                          "task_created",
-                          "plan_updated",
-                          "plan_approved",
-                          "agent_run_started",
-                          "agent_run_stopped",
-                          "retry_requested",
-                          "manual_takeover",
-                          "verification_passed",
-                          "verification_failed",
-                          "escalated",
-                          "engineer_signed_off",
-                          "pr_opened",
-                          "client_approved",
-                          "client_requested_changes",
-                          "merged",
-                          "closed"
-                        ]
-                      },
-                      "actor": {
-                        "oneOf": [
-                          {
-                            "type": "object",
-                            "properties": {
-                              "type": {
-                                "type": "string",
-                                "const": "person"
-                              },
-                              "id": {
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "type",
-                              "id"
-                            ],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "type": {
-                                "type": "string",
-                                "const": "agent"
-                              },
-                              "id": {
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "type",
-                              "id"
-                            ],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "type": {
-                                "type": "string",
-                                "const": "system"
-                              },
-                              "id": {
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "type",
-                              "id"
-                            ],
-                            "additionalProperties": false
-                          }
-                        ]
-                      },
-                      "at": {
-                        "type": "string",
-                        "format": "date-time",
-                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                      },
-                      "payload": {
-                        "type": "object",
-                        "propertyNames": {
-                          "type": "string"
-                        },
-                        "additionalProperties": {}
-                      },
-                      "hash": {
-                        "type": "string"
-                      },
-                      "prevHash": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "actorResolved": {
-                        "type": "object",
-                        "properties": {
-                          "type": {
-                            "type": "string",
-                            "enum": [
-                              "person",
-                              "agent",
-                              "system"
-                            ]
-                          },
-                          "id": {
-                            "type": "string"
-                          },
-                          "name": {
-                            "type": "string"
-                          },
-                          "detail": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "type",
-                          "id",
-                          "name",
-                          "detail"
-                        ],
-                        "additionalProperties": false
-                      },
-                      "hashValid": {
-                        "type": "boolean"
-                      }
-                    },
-                    "required": [
-                      "id",
-                      "taskId",
-                      "event",
-                      "actor",
-                      "at",
-                      "payload",
-                      "hash",
-                      "prevHash",
-                      "actorResolved",
-                      "hashValid"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "attempts": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
-              }
-            },
-            "required": [
-              "id",
-              "repositoryId",
-              "applicationId",
-              "orgId",
-              "type",
-              "title",
-              "summary",
-              "source",
-              "state",
-              "priority",
-              "slaDueAt",
-              "assigneeUserId",
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "sessionId"
+        ],
+        "additionalProperties": false
+      },
+      "requestedAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+      },
+      "expiresAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+      },
+      "approverRole": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "admin",
+          "member",
+          "viewer"
+        ]
+      },
+      "decidedBy": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "decidedAt": {
+        "anyOf": [
+          {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "comment": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "requesterResolved": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "person",
               "agent",
-              "createdAt",
-              "aiAuthoredPct",
-              "plan",
-              "estimatedHours",
-              "applicationName",
-              "organizationName",
-              "repositoryName",
-              "assignee",
-              "latestRun",
-              "latestVerification",
-              "pullRequest",
-              "slaRisk",
-              "lastEvent",
-              "attempts"
-            ],
-            "additionalProperties": false
-          },
-          "records": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "taskId": {
-                  "type": "string"
-                },
-                "event": {
-                  "type": "string",
-                  "enum": [
-                    "task_created",
-                    "plan_updated",
-                    "plan_approved",
-                    "agent_run_started",
-                    "agent_run_stopped",
-                    "retry_requested",
-                    "manual_takeover",
-                    "verification_passed",
-                    "verification_failed",
-                    "escalated",
-                    "engineer_signed_off",
-                    "pr_opened",
-                    "client_approved",
-                    "client_requested_changes",
-                    "merged",
-                    "closed"
-                  ]
-                },
-                "actor": {
-                  "oneOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "type": {
-                          "type": "string",
-                          "const": "person"
-                        },
-                        "id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "type",
-                        "id"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "type": {
-                          "type": "string",
-                          "const": "agent"
-                        },
-                        "id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "type",
-                        "id"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "type": {
-                          "type": "string",
-                          "const": "system"
-                        },
-                        "id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "type",
-                        "id"
-                      ],
-                      "additionalProperties": false
-                    }
-                  ]
-                },
-                "at": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                },
-                "payload": {
-                  "type": "object",
-                  "propertyNames": {
-                    "type": "string"
-                  },
-                  "additionalProperties": {}
-                },
-                "hash": {
-                  "type": "string"
-                },
-                "prevHash": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "actorResolved": {
-                  "type": "object",
-                  "properties": {
-                    "type": {
-                      "type": "string",
-                      "enum": [
-                        "person",
-                        "agent",
-                        "system"
-                      ]
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string"
-                    },
-                    "detail": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "type",
-                    "id",
-                    "name",
-                    "detail"
-                  ],
-                  "additionalProperties": false
-                },
-                "hashValid": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "id",
-                "taskId",
-                "event",
-                "actor",
-                "at",
-                "payload",
-                "hash",
-                "prevHash",
-                "actorResolved",
-                "hashValid"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "chainValid": {
-            "type": "boolean"
-          },
-          "verification": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string"
-                  },
-                  "agentRunId": {
-                    "type": "string"
-                  },
-                  "testsRun": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "testsPassed": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "testsFailed": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "securityFindings": {
-                    "type": "object",
-                    "properties": {
-                      "critical": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "high": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "medium": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "required": [
-                      "critical",
-                      "high",
-                      "medium"
-                    ],
-                    "additionalProperties": false
-                  },
-                  "riskScore": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 100
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "running",
-                      "passed",
-                      "failed"
-                    ]
-                  },
-                  "durationMin": {
-                    "type": "number",
-                    "minimum": 0
-                  },
-                  "startedAt": {
-                    "type": "string",
-                    "format": "date-time",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                  },
-                  "coveragePct": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 100
-                  },
-                  "testResults": {
-                    "default": [],
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "name": {
-                          "type": "string"
-                        },
-                        "suite": {
-                          "type": "string"
-                        },
-                        "status": {
-                          "type": "string",
-                          "enum": [
-                            "passed",
-                            "failed",
-                            "skipped"
-                          ]
-                        },
-                        "durationMs": {
-                          "type": "number",
-                          "minimum": 0
-                        },
-                        "flaky": {
-                          "default": false,
-                          "type": "boolean"
-                        }
-                      },
-                      "required": [
-                        "name",
-                        "suite",
-                        "status",
-                        "durationMs",
-                        "flaky"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "artifacts": {
-                    "default": [],
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "enum": [
-                            "screenshot",
-                            "log",
-                            "sbom",
-                            "report"
-                          ]
-                        },
-                        "label": {
-                          "type": "string"
-                        },
-                        "url": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "kind",
-                        "label",
-                        "url"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "scanners": {
-                    "default": [],
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  }
-                },
-                "required": [
-                  "id",
-                  "agentRunId",
-                  "testsRun",
-                  "testsPassed",
-                  "testsFailed",
-                  "securityFindings",
-                  "riskScore",
-                  "status",
-                  "durationMin",
-                  "testResults",
-                  "artifacts",
-                  "scanners"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "null"
-              }
+              "system"
             ]
           },
-          "agentLabel": {
+          "id": {
             "type": "string"
           },
-          "signOff": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "by": {
-                    "type": "string"
-                  },
-                  "at": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "by",
-                  "at"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "name": {
+            "type": "string"
           },
-          "clientApproval": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "by": {
-                    "type": "string"
-                  },
-                  "at": {
-                    "type": "string"
-                  },
-                  "decision": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "by",
-                  "at",
-                  "decision"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "diffSummary": {
-            "type": "object",
-            "properties": {
-              "files": {
-                "type": "number"
-              },
-              "additions": {
-                "type": "number"
-              },
-              "deletions": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "files",
-              "additions",
-              "deletions"
-            ],
-            "additionalProperties": false
-          },
-          "lastEventAt": {
+          "detail": {
             "type": "string"
           }
         },
         "required": [
+          "type",
           "id",
-          "task",
-          "records",
-          "chainValid",
-          "verification",
-          "agentLabel",
-          "signOff",
-          "clientApproval",
-          "diffSummary",
-          "lastEventAt"
+          "name",
+          "detail"
         ],
         "additionalProperties": false
+      },
+      "taskTitle": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "canDecide": {
+        "type": "boolean"
       }
-    }
-  },
-  "required": [
-    "exportedAt",
-    "exportedBy",
-    "packs"
-  ],
-  "additionalProperties": false
+    },
+    "required": [
+      "id",
+      "orgId",
+      "action",
+      "status",
+      "title",
+      "context",
+      "requestedBy",
+      "requestedAt",
+      "expiresAt",
+      "approverRole",
+      "decidedBy",
+      "decidedAt",
+      "comment",
+      "requesterResolved",
+      "taskTitle",
+      "canDecide"
+    ],
+    "additionalProperties": false
+  }
 }
 ```
 
-### GET `/reports/savings`
+### POST `/approvals/:id/decision`
 
-Monthly savings report computed from delivered tasks. ?month=YYYY-MM (default: latest) ?orgId= (console)
+Approve or reject. Bound to the exact action and context; requester can't approve their own request.
 
-- **Auth:** Any signed-in user
-- **Response 200:** [`SavingsReport`](#savingsreport)
+- **Auth:** Permission `approval.decide`
+- **Request body:** [`ApprovalDecisionInput`](#approvaldecisioninput)
+- **Response 200:** [`Approval`](#approval)
 
-### GET `/reports/sla`
+### POST `/sessions/:id/input`
 
-SLA report: target vs actual per metric, breaches with reasons. ?orgId= (console)
+Answer an agent's clarification question and resume the session.
 
-- **Auth:** Any signed-in user
-- **Response 200:** [`SlaReport`](#slareport)
+- **Auth:** Permission `task.launch`
+- **Request body:** [`SessionInput`](#sessioninput)
+- **Response 200:** [`SessionListItem`](#sessionlistitem)
 
-### GET `/clients`
+### GET `/analytics`
 
-Client list. Margin is only included for delivery managers.
+Analytics (30/90 days): North Star, task success by type, providers (task-mix caveat), PR acceptance, test usefulness, cost per verified task.
 
-- **Auth:** ForgePilot console roles
-- **Response 200:** [`ClientSummary[]`](#clientsummary)
-
-### GET `/clients/:id`
-
-Client detail: contract, SLA, applications, contacts, recent tasks, integrations.
-
-- **Auth:** ForgePilot console roles
-- **Response 200:** [`ClientDetail`](#clientdetail)
-
-### GET `/ops`
-
-Ops dashboard KPIs and charts (delivery manager only).
-
-- **Auth:** fp_manager only
-- **Response 200:** [`OpsDashboard`](#opsdashboard)
-
-### GET `/engineers`
-
-ForgePilot engineers (for assignee pickers).
-
-- **Auth:** ForgePilot console roles
-- **Response 200:** [`User[]`](#user)
-
-### GET `/team`
-
-Users in the client organization.
-
-- **Auth:** Client portal roles
-- **Response 200:** [`User[]`](#user)
-
-### POST `/team/invite`
-
-Invite a user to the client organization (client_admin only).
-
-- **Auth:** Client portal roles
-- **Request body:** [`InviteUserInput`](#inviteuserinput)
-- **Response 200:** [`User`](#user)
+- **Auth:** Any workspace member
+- **Response 200:** [`Analytics`](#analytics)
 
 ### GET `/integrations`
 
-Integration catalog merged with this organization's connections. ?orgId= (console)
+Integration catalogue merged with this workspace's connections.
 
-- **Auth:** Any signed-in user
+- **Auth:** Any workspace member
 - **Response 200:** [`IntegrationView[]`](#integrationview)
 
 ### POST `/integrations/:providerId/connect`
 
-Mock OAuth connect for an integration (client_admin only).
+Connect (mock OAuth / API key) an integration. Credentials live in the vault; only a reference is stored.
 
-- **Auth:** Client portal roles
+- **Auth:** Permission `integration.manage`
 - **Request body:** [`ConnectIntegrationInput`](#connectintegrationinput)
-- **Response 200:** [`IntegrationView`](#integrationview)
+- **Response 200:** [`Integration`](#integration)
 
 ### POST `/integrations/:providerId/disconnect`
 
-Disconnect an integration (client_admin only).
+Disconnect and revoke an integration.
 
-- **Auth:** Client portal roles
+- **Auth:** Permission `integration.manage`
 - **Response 200:** [`Ok`](#ok)
+
+### POST `/workspace`
+
+Rename the workspace.
+
+- **Auth:** Permission `workspace.manage`
+- **Request body:** [`WorkspacePatch`](#workspacepatch)
+- **Response 200:** [`Organization`](#organization)
+
+### GET `/members`
+
+Members, pending invitations and seats.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`Members`](#members)
+
+### POST `/members/invite`
+
+Invite a member (respects the plan's seat limit).
+
+- **Auth:** Permission `member.manage`
+- **Request body:** [`InviteInput`](#inviteinput)
+- **Response 200:** [`Invitation`](#invitation)
+
+### POST `/invitations/:id/revoke`
+
+Revoke a pending invitation.
+
+- **Auth:** Permission `member.manage`
+- **Response 200:** [`Ok`](#ok)
+
+### POST `/members/:userId/role`
+
+Change a member's role. Only owners can grant or remove owner; the last owner can't be demoted.
+
+- **Auth:** Permission `member.manage`
+- **Request body:** [`RoleChangeInput`](#rolechangeinput)
+- **Response 200:** [`Ok`](#ok)
+
+### POST `/members/:userId/remove`
+
+Remove a member from the workspace.
+
+- **Auth:** Permission `member.manage`
+- **Response 200:** [`Ok`](#ok)
+
+### GET `/policy`
+
+Workspace policies: providers, protected paths, network, required checks, approval rules, retention.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`Policy`](#policy)
+
+### POST `/policy`
+
+Update workspace policies (Team plan and above).
+
+- **Auth:** Permission `policy.manage`
+- **Request body:** [`PolicyPatch`](#policypatch)
+- **Response 200:** [`Policy`](#policy)
+
+### GET `/api-keys`
+
+API keys (prefix only; secrets are shown once at creation).
+
+- **Auth:** Any workspace member
+- **Response 200:** [`ApiKey[]`](#apikey)
+
+### POST `/api-keys`
+
+Create an API key. The secret is returned once.
+
+- **Auth:** Permission `apikey.manage`
+- **Request body:** [`ApiKeyInput`](#apikeyinput)
+- **Response 200:** [`ApiKeyCreated`](#apikeycreated)
+
+### POST `/api-keys/:id/revoke`
+
+Revoke an API key immediately.
+
+- **Auth:** Permission `apikey.manage`
+- **Response 200:** [`Ok`](#ok)
+
+### GET `/audit-logs`
+
+Audit log of user, agent and system actions. ?actorType= &q= &limit=
+
+- **Auth:** Any workspace member
+- **Response 200:** [`ActivityItem[]`](#activityitem)
+
+### GET `/plans`
+
+Public plan catalogue (pricing page).
+
+- **Auth:** None
+- **Response 200:** [`Plan[]`](#plan)
+
+### GET `/billing`
+
+Plan, metered usage vs quota, projected spend, budget, cost breakdowns and invoices.
+
+- **Auth:** Any workspace member
+- **Response 200:** [`Billing`](#billing)
+
+### POST `/billing/plan`
+
+Change plan or billing cycle (mock checkout). Enterprise is sales-assisted.
+
+- **Auth:** Permission `billing.manage`
+- **Request body:** [`ChangePlanInput`](#changeplaninput)
+- **Response 200:** [`Billing`](#billing)
+
+### POST `/billing/budget`
+
+Set the monthly execution budget, hard cap and alert thresholds.
+
+- **Auth:** Permission `billing.manage`
+- **Request body:** [`BudgetInput`](#budgetinput)
+- **Response 200:** [`Billing`](#billing)
 
 ### GET `/notifications`
 
-Notifications for the current user's area (portal: their org).
+Notifications for the active workspace.
 
-- **Auth:** Any signed-in user
-- **Response 200:** [`NotificationList`](#notificationlist)
+- **Auth:** Any workspace member
+- **Response 200:** [`Notification[]`](#notification)
 
 ### POST `/notifications/read`
 
-Mark notifications read. Body: { ids?: string[] } (omit for all).
+Mark notifications read. Body { ids?: string[] }.
 
-- **Auth:** Any signed-in user
-- **Request body:** ```json
+- **Auth:** Any workspace member
+- **Request body:** 
+
+```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -1541,38 +1244,16 @@ Mark notifications read. Body: { ids?: string[] } (omit for all).
 
 ### GET `/search`
 
-Global search across clients, applications, repositories and tasks. ?q=
+Search projects, repositories, tasks, PRs, bugs, findings and sessions. ?q=
 
-- **Auth:** Any signed-in user
+- **Auth:** Any workspace member
 - **Response 200:** [`SearchResult[]`](#searchresult)
-
-### GET `/onboarding/git-repos`
-
-Repositories visible after the mock Git OAuth connect. ?provider=&account=
-
-- **Auth:** Client portal roles
-- **Response 200:** [`GitRepoCandidate[]`](#gitrepocandidate)
-
-### POST `/onboarding`
-
-Complete onboarding: create organization, contract, applications, repositories and start health scans.
-
-- **Auth:** Client portal roles
-- **Request body:** [`OnboardingInput`](#onboardinginput)
-- **Response 200:** [`OnboardingResult`](#onboardingresult)
-
-### GET `/onboarding/:orgId/status`
-
-Onboarding scan progress and, when done, the health report + 90-day plan.
-
-- **Auth:** Client portal roles
-- **Response 200:** [`OnboardingStatus`](#onboardingstatus)
 
 ### POST `/demo/reset`
 
 Reset all mock data to the seed (demo mode).
 
-- **Auth:** Any signed-in user
+- **Auth:** None
 - **Response 200:** [`Ok`](#ok)
 
 ## Schemas
@@ -1590,31 +1271,27 @@ Reset all mock data to the seed (demo mode).
     "id": {
       "type": "string"
     },
-    "taskId": {
+    "orgId": {
       "type": "string"
     },
-    "event": {
-      "$ref": "#/schemas/EvidenceEvent"
-    },
     "actor": {
-      "$ref": "#/schemas/Actor"
+      "$ref": "#/schemas/ActorRef"
+    },
+    "action": {
+      "type": "string"
+    },
+    "resource": {
+      "type": "string"
     },
     "at": {
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
     },
-    "payload": {
-      "type": "object",
-      "propertyNames": {
-        "type": "string"
-      },
-      "additionalProperties": {}
-    },
-    "hash": {
+    "detail": {
       "type": "string"
     },
-    "prevHash": {
+    "ip": {
       "type": [
         "string",
         "null"
@@ -1623,44 +1300,39 @@ Reset all mock data to the seed (demo mode).
     "actorResolved": {
       "$ref": "#/schemas/ResolvedActor"
     },
-    "hashValid": {
-      "type": "boolean"
-    },
-    "taskTitle": {
-      "type": "string"
-    },
-    "applicationName": {
+    "label": {
       "type": "string"
     },
     "href": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
     "id",
-    "taskId",
-    "event",
+    "orgId",
     "actor",
+    "action",
+    "resource",
     "at",
-    "payload",
-    "hash",
-    "prevHash",
+    "detail",
+    "ip",
     "actorResolved",
-    "hashValid",
-    "taskTitle",
-    "applicationName",
+    "label",
     "href"
   ],
   "additionalProperties": false
 }
 ```
 
-### Actor
+### ActorRef
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/Actor",
+  "$id": "#/schemas/ActorRef",
   "oneOf": [
     {
       "type": "object",
@@ -1717,370 +1389,495 @@ Reset all mock data to the seed (demo mode).
 }
 ```
 
-### AgentKind
+### Agent
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/AgentKind",
-  "type": "string",
-  "enum": [
-    "claude_code",
-    "codex",
-    "devin"
-  ]
-}
-```
-
-### AgentRun
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/AgentRun",
+  "$id": "#/schemas/Agent",
   "type": "object",
   "properties": {
     "id": {
       "type": "string"
     },
-    "taskId": {
+    "orgId": {
       "type": "string"
     },
-    "attempt": {
-      "type": "integer",
-      "exclusiveMinimum": 0,
-      "maximum": 9007199254740991
+    "provider": {
+      "$ref": "#/schemas/Provider"
     },
-    "agent": {
-      "$ref": "#/schemas/AgentKind"
+    "name": {
+      "type": "string"
     },
     "model": {
       "type": "string"
     },
-    "modelVersion": {
-      "type": "string"
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "suspended"
+      ]
     },
-    "tokens": {
+    "maxConcurrent": {
       "type": "integer",
-      "minimum": 0,
+      "exclusiveMinimum": 0,
       "maximum": 9007199254740991
     },
-    "costUsd": {
+    "defaultTimeoutMin": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "defaultBudgetUsd": {
       "type": "number",
       "minimum": 0
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "provider",
+    "name",
+    "model",
+    "status",
+    "maxConcurrent",
+    "defaultTimeoutMin",
+    "defaultBudgetUsd"
+  ],
+  "additionalProperties": false
+}
+```
+
+### Analytics
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Analytics",
+  "type": "object",
+  "properties": {
+    "rangeDays": {
+      "type": "number"
     },
-    "durationSec": {
+    "northStar": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/TrendPoint"
+      }
+    },
+    "taskSuccessByType": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "tasks": {
+            "type": "number"
+          },
+          "successPct": {
+            "type": "number"
+          },
+          "avgCostUsd": {
+            "type": "number"
+          },
+          "reworkPct": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "category",
+          "tasks",
+          "successPct",
+          "avgCostUsd",
+          "reworkPct"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "$ref": "#/schemas/Provider"
+          },
+          "sessions": {
+            "type": "number"
+          },
+          "successPct": {
+            "type": "number"
+          },
+          "avgMinutes": {
+            "type": "number"
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "humanInterventions": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "provider",
+          "sessions",
+          "successPct",
+          "avgMinutes",
+          "costUsd",
+          "humanInterventions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "prAcceptance": {
+      "type": "object",
+      "properties": {
+        "agentPct": {
+          "type": "number"
+        },
+        "humanPct": {
+          "type": "number"
+        },
+        "agentMerged": {
+          "type": "number"
+        },
+        "humanMerged": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "agentPct",
+        "humanPct",
+        "agentMerged",
+        "humanMerged"
+      ],
+      "additionalProperties": false
+    },
+    "testUsefulness": {
+      "type": "object",
+      "properties": {
+        "actionablePct": {
+          "type": "number"
+        },
+        "reported": {
+          "type": "number"
+        },
+        "falsePositive": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "actionablePct",
+        "reported",
+        "falsePositive"
+      ],
+      "additionalProperties": false
+    },
+    "timeToVerifyMinP50": {
+      "type": "number"
+    },
+    "costPerVerifiedTaskUsd": {
+      "type": "number"
+    },
+    "spendByDay": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "agentUsd": {
+            "type": "number"
+          },
+          "browserUsd": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "agentUsd",
+          "browserUsd"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "rangeDays",
+    "northStar",
+    "taskSuccessByType",
+    "providers",
+    "prAcceptance",
+    "testUsefulness",
+    "timeToVerifyMinP50",
+    "costPerVerifiedTaskUsd",
+    "spendByDay"
+  ],
+  "additionalProperties": false
+}
+```
+
+### ApiKey
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/ApiKey",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "prefix": {
+      "type": "string"
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "createdBy": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "lastUsedAt": {
       "anyOf": [
         {
-          "type": "number",
-          "minimum": 0
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "name",
+    "prefix",
+    "scopes",
+    "createdBy",
+    "createdAt",
+    "lastUsedAt"
+  ],
+  "additionalProperties": false
+}
+```
+
+### ApiKeyCreated
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/ApiKeyCreated",
+  "type": "object",
+  "properties": {
+    "key": {
+      "$ref": "#/schemas/ApiKey"
+    },
+    "secret": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "key",
+    "secret"
+  ],
+  "additionalProperties": false
+}
+```
+
+### ApiKeyInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/ApiKeyInput",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 2
+    },
+    "scopes": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "name",
+    "scopes"
+  ],
+  "additionalProperties": false
+}
+```
+
+### Approval
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Approval",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "action": {
+      "$ref": "#/schemas/ApprovalAction"
+    },
+    "status": {
+      "$ref": "#/schemas/ApprovalStatus"
+    },
+    "title": {
+      "type": "string"
+    },
+    "context": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "requestedBy": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "person",
+            "agent"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "requestedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "approverRole": {
+      "$ref": "#/schemas/Role"
+    },
+    "decidedBy": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "decidedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
         },
         {
           "type": "null"
         }
       ]
     },
-    "outcome": {
-      "type": "string",
-      "enum": [
-        "running",
-        "success",
-        "verification_failed",
-        "stopped",
-        "error"
+    "comment": {
+      "type": [
+        "string",
+        "null"
       ]
-    },
-    "startedAt": {
-      "type": "string",
-      "format": "date-time",
-      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-    },
-    "notes": {
-      "type": "string"
-    },
-    "simulatedEndsAt": {
-      "type": "number"
-    },
-    "simulateFailure": {
-      "type": "boolean"
-    }
-  },
-  "required": [
-    "id",
-    "taskId",
-    "attempt",
-    "agent",
-    "model",
-    "tokens",
-    "costUsd",
-    "durationSec",
-    "outcome",
-    "startedAt"
-  ],
-  "additionalProperties": false
-}
-```
-
-### Application
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/Application",
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    },
-    "orgId": {
-      "type": "string"
-    },
-    "name": {
-      "type": "string"
-    },
-    "criticality": {
-      "$ref": "#/schemas/Criticality"
-    },
-    "environments": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "ownerUserIds": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "description": {
-      "type": "string"
-    },
-    "tier": {
-      "$ref": "#/schemas/Tier"
     }
   },
   "required": [
     "id",
     "orgId",
-    "name",
-    "criticality",
-    "environments",
-    "ownerUserIds"
+    "action",
+    "status",
+    "title",
+    "context",
+    "requestedBy",
+    "requestedAt",
+    "expiresAt",
+    "approverRole",
+    "decidedBy",
+    "decidedAt",
+    "comment"
   ],
   "additionalProperties": false
 }
 ```
 
-### ApplicationDetail
+### ApprovalAction
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/ApplicationDetail",
-  "type": "object",
-  "properties": {
-    "application": {
-      "$ref": "#/schemas/ApplicationSummary"
-    },
-    "organization": {
-      "$ref": "#/schemas/Organization"
-    },
-    "owners": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/User"
-      }
-    },
-    "health": {
-      "$ref": "#/schemas/HealthBreakdown"
-    },
-    "history": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/HealthSnapshot"
-      }
-    },
-    "repositories": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/Repository"
-      }
-    },
-    "findings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "repositoryId": {
-            "type": "string"
-          },
-          "dimension": {
-            "$ref": "#/schemas/HealthDimension"
-          },
-          "severity": {
-            "$ref": "#/schemas/Severity"
-          },
-          "title": {
-            "type": "string"
-          },
-          "recommendation": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "open",
-              "in_progress",
-              "resolved"
-            ]
-          },
-          "detectedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-          },
-          "repositoryName": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "repositoryId",
-          "dimension",
-          "severity",
-          "title",
-          "recommendation",
-          "status",
-          "detectedAt",
-          "repositoryName"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "tasks": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/TaskListItem"
-      }
-    }
-  },
-  "required": [
-    "application",
-    "organization",
-    "owners",
-    "health",
-    "history",
-    "repositories",
-    "findings",
-    "tasks"
-  ],
-  "additionalProperties": false
+  "$id": "#/schemas/ApprovalAction",
+  "type": "string",
+  "enum": [
+    "modify_protected_path",
+    "access_secret",
+    "run_migration",
+    "network_egress",
+    "budget_increase",
+    "create_pull_request",
+    "deploy_production"
+  ]
 }
 ```
 
-### ApplicationSummary
+### ApprovalDecisionInput
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/ApplicationSummary",
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    },
-    "orgId": {
-      "type": "string"
-    },
-    "name": {
-      "type": "string"
-    },
-    "criticality": {
-      "$ref": "#/schemas/Criticality"
-    },
-    "environments": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "ownerUserIds": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "description": {
-      "type": "string"
-    },
-    "tier": {
-      "$ref": "#/schemas/Tier"
-    },
-    "organizationName": {
-      "type": "string"
-    },
-    "repoCount": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
-    },
-    "healthScore": {
-      "type": "number"
-    },
-    "healthDelta": {
-      "type": "number"
-    },
-    "openTasks": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
-    },
-    "slaStatus": {
-      "$ref": "#/schemas/SlaStatus"
-    },
-    "languages": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/Language"
-      }
-    }
-  },
-  "required": [
-    "id",
-    "orgId",
-    "name",
-    "criticality",
-    "environments",
-    "ownerUserIds",
-    "organizationName",
-    "repoCount",
-    "healthScore",
-    "healthDelta",
-    "openTasks",
-    "slaStatus",
-    "languages"
-  ],
-  "additionalProperties": false
-}
-```
-
-### ApprovalInput
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/ApprovalInput",
+  "$id": "#/schemas/ApprovalDecisionInput",
   "type": "object",
   "properties": {
     "decision": {
       "type": "string",
       "enum": [
         "approved",
-        "changes_requested"
+        "rejected"
       ]
     },
     "comment": {
@@ -2096,235 +1893,51 @@ Reset all mock data to the seed (demo mode).
 }
 ```
 
-### ApprovalQueueItem
+### ApprovalRule
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/ApprovalQueueItem",
+  "$id": "#/schemas/ApprovalRule",
   "type": "object",
   "properties": {
-    "id": {
-      "type": "string"
+    "action": {
+      "$ref": "#/schemas/ApprovalAction"
     },
-    "repositoryId": {
-      "type": "string"
-    },
-    "applicationId": {
-      "type": "string"
-    },
-    "orgId": {
-      "type": "string"
-    },
-    "type": {
-      "$ref": "#/schemas/TaskType"
-    },
-    "title": {
-      "type": "string"
-    },
-    "summary": {
-      "type": "string"
-    },
-    "source": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": [
-            "ticket",
-            "scan",
-            "manual"
-          ]
-        },
-        "ref": {
-          "type": "string"
-        },
-        "url": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "kind",
-        "ref"
-      ],
-      "additionalProperties": false
-    },
-    "state": {
-      "$ref": "#/schemas/TaskState"
-    },
-    "priority": {
-      "$ref": "#/schemas/Priority"
-    },
-    "slaDueAt": {
+    "mode": {
       "type": "string",
-      "format": "date-time",
-      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-    },
-    "assigneeUserId": {
-      "type": [
-        "string",
-        "null"
+      "enum": [
+        "allow",
+        "require_approval",
+        "prohibited"
       ]
     },
-    "agent": {
-      "$ref": "#/schemas/AgentKind"
-    },
-    "createdAt": {
-      "type": "string",
-      "format": "date-time",
-      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-    },
-    "aiAuthoredPct": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
-    },
-    "plan": {
-      "$ref": "#/schemas/Plan"
-    },
-    "estimatedHours": {
-      "type": "number",
-      "minimum": 0
-    },
-    "escalationReason": {
-      "type": "string"
-    },
-    "manualTakeoverBy": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "applicationName": {
-      "type": "string"
-    },
-    "organizationName": {
-      "type": "string"
-    },
-    "repositoryName": {
-      "type": "string"
-    },
-    "assignee": {
-      "anyOf": [
-        {
-          "$ref": "#/schemas/User"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "latestRun": {
-      "anyOf": [
-        {
-          "$ref": "#/schemas/AgentRun"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "latestVerification": {
-      "anyOf": [
-        {
-          "$ref": "#/schemas/VerificationRun"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "pullRequest": {
-      "anyOf": [
-        {
-          "$ref": "#/schemas/PullRequest"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "slaRisk": {
-      "$ref": "#/schemas/TaskSlaRisk"
-    },
-    "lastEvent": {
-      "anyOf": [
-        {
-          "$ref": "#/schemas/EvidenceItem"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "attempts": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
-    },
-    "waitingHours": {
-      "type": "number"
-    },
-    "signOff": {
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "by": {
-              "type": "string"
-            },
-            "at": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "by",
-            "at"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "highRisk": {
-      "type": "boolean"
+    "approverRole": {
+      "$ref": "#/schemas/Role"
     }
   },
   "required": [
-    "id",
-    "repositoryId",
-    "applicationId",
-    "orgId",
-    "type",
-    "title",
-    "summary",
-    "source",
-    "state",
-    "priority",
-    "slaDueAt",
-    "assigneeUserId",
-    "agent",
-    "createdAt",
-    "aiAuthoredPct",
-    "plan",
-    "estimatedHours",
-    "applicationName",
-    "organizationName",
-    "repositoryName",
-    "assignee",
-    "latestRun",
-    "latestVerification",
-    "pullRequest",
-    "slaRisk",
-    "lastEvent",
-    "attempts",
-    "waitingHours",
-    "signOff",
-    "highRisk"
+    "action",
+    "mode",
+    "approverRole"
   ],
   "additionalProperties": false
+}
+```
+
+### ApprovalStatus
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/ApprovalStatus",
+  "type": "string",
+  "enum": [
+    "pending",
+    "approved",
+    "rejected",
+    "expired"
+  ]
 }
 ```
 
@@ -2343,10 +1956,12 @@ Reset all mock data to the seed (demo mode).
       "type": "string",
       "enum": [
         "approval",
-        "sla_risk",
-        "critical_cve",
-        "escalation",
-        "integration_error"
+        "failed_check",
+        "critical_finding",
+        "budget",
+        "integration",
+        "review_ready",
+        "waiting_input"
       ]
     },
     "title": {
@@ -2379,146 +1994,843 @@ Reset all mock data to the seed (demo mode).
 }
 ```
 
-### ClientDetail
+### Billing
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/ClientDetail",
+  "$id": "#/schemas/Billing",
   "type": "object",
   "properties": {
-    "client": {
-      "$ref": "#/schemas/ClientSummary"
+    "plan": {
+      "$ref": "#/schemas/PlanId"
     },
-    "contract": {
+    "billingCycle": {
+      "type": "string",
+      "enum": [
+        "monthly",
+        "annual"
+      ]
+    },
+    "seatsUsed": {
+      "type": "number"
+    },
+    "seatsIncluded": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "periodStart": {
+      "type": "string"
+    },
+    "periodEnd": {
+      "type": "string"
+    },
+    "subscriptionUsd": {
+      "type": "number"
+    },
+    "usage": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/MeterUsage"
+      }
+    },
+    "spend": {
+      "type": "object",
+      "properties": {
+        "usageCostUsd": {
+          "type": "number"
+        },
+        "projectedUsd": {
+          "type": "number"
+        },
+        "budgetUsd": {
+          "type": "number"
+        },
+        "hardCap": {
+          "type": "boolean"
+        },
+        "alertAtPct": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "pctOfBudget": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "usageCostUsd",
+        "projectedUsd",
+        "budgetUsd",
+        "hardCap",
+        "alertAtPct",
+        "pctOfBudget"
+      ],
+      "additionalProperties": false
+    },
+    "dailyCost": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "costUsd": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "costUsd"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "costByProject": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "costUsd": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "projectId",
+          "name",
+          "costUsd"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "costByProvider": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "costUsd": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "provider",
+          "costUsd"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "invoices": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/Invoice"
+      }
+    },
+    "paymentMethod": {
       "anyOf": [
         {
-          "$ref": "#/schemas/Contract"
+          "type": "object",
+          "properties": {
+            "brand": {
+              "type": "string"
+            },
+            "last4": {
+              "type": "string"
+            },
+            "expires": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "brand",
+            "last4",
+            "expires"
+          ],
+          "additionalProperties": false
         },
         {
           "type": "null"
         }
       ]
     },
-    "applications": {
+    "limits": {
       "type": "array",
       "items": {
-        "$ref": "#/schemas/ApplicationSummary"
-      }
-    },
-    "contacts": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/User"
-      }
-    },
-    "tasks": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/TaskListItem"
-      }
-    },
-    "integrations": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/Integration"
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "used": {
+            "type": "number"
+          },
+          "limit": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "used",
+          "limit"
+        ],
+        "additionalProperties": false
       }
     }
   },
   "required": [
-    "client",
-    "contract",
-    "applications",
-    "contacts",
-    "tasks",
-    "integrations"
+    "plan",
+    "billingCycle",
+    "seatsUsed",
+    "seatsIncluded",
+    "periodStart",
+    "periodEnd",
+    "subscriptionUsd",
+    "usage",
+    "spend",
+    "dailyCost",
+    "costByProject",
+    "costByProvider",
+    "invoices",
+    "paymentMethod",
+    "limits"
   ],
   "additionalProperties": false
 }
 ```
 
-### ClientSummary
+### BudgetInput
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/ClientSummary",
+  "$id": "#/schemas/BudgetInput",
+  "type": "object",
+  "properties": {
+    "monthlyLimitUsd": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "hardCap": {
+      "type": "boolean"
+    },
+    "alertAtPct": {
+      "maxItems": 5,
+      "type": "array",
+      "items": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": 100
+      }
+    }
+  },
+  "required": [
+    "monthlyLimitUsd",
+    "hardCap",
+    "alertAtPct"
+  ],
+  "additionalProperties": false
+}
+```
+
+### Bug
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Bug",
   "type": "object",
   "properties": {
     "id": {
       "type": "string"
     },
-    "name": {
+    "orgId": {
       "type": "string"
     },
-    "industry": {
+    "repositoryId": {
       "type": "string"
     },
-    "region": {
+    "runId": {
       "type": "string"
     },
-    "tier": {
-      "$ref": "#/schemas/Tier"
-    },
-    "headquarters": {
+    "resultId": {
       "type": "string"
     },
-    "domain": {
+    "pullRequestId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title": {
       "type": "string"
     },
-    "onboardedAt": {
+    "severity": {
+      "$ref": "#/schemas/Severity"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "fix_in_progress",
+        "resolved",
+        "wont_fix"
+      ]
+    },
+    "commitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "reproSteps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stackTrace": {
+      "type": "string"
+    },
+    "suspectedCause": {
+      "type": "string"
+    },
+    "createdAt": {
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
     },
-    "status": {
-      "default": "active",
-      "type": "string",
-      "enum": [
-        "active",
-        "onboarding",
-        "paused"
+    "taskId": {
+      "type": [
+        "string",
+        "null"
       ]
     },
-    "applications": {
-      "type": "number"
+    "assigneeId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "repositoryId",
+    "runId",
+    "resultId",
+    "pullRequestId",
+    "title",
+    "severity",
+    "status",
+    "commitSha",
+    "reproSteps",
+    "stackTrace",
+    "suspectedCause",
+    "createdAt",
+    "taskId",
+    "assigneeId"
+  ],
+  "additionalProperties": false
+}
+```
+
+### BugActionInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/BugActionInput",
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "create_fix_task",
+        "resolve",
+        "wont_fix",
+        "reopen"
+      ]
     },
-    "arrUsd": {
-      "type": "number"
+    "agentId": {
+      "type": "string"
     },
-    "slaMetPct": {
-      "type": "number"
+    "comment": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "action"
+  ],
+  "additionalProperties": false
+}
+```
+
+### BugDetail
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/BugDetail",
+  "type": "object",
+  "properties": {
+    "bug": {
+      "$ref": "#/schemas/BugListItem"
     },
-    "slaStatus": {
-      "$ref": "#/schemas/SlaStatus"
+    "result": {
+      "$ref": "#/schemas/TestResult"
     },
-    "openTasks": {
-      "type": "number"
+    "run": {
+      "$ref": "#/schemas/TestRun"
     },
-    "marginPct": {
+    "pullRequest": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/PullRequest"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "task": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/Task"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "repository": {
+      "$ref": "#/schemas/Repository"
+    }
+  },
+  "required": [
+    "bug",
+    "result",
+    "run",
+    "pullRequest",
+    "task",
+    "repository"
+  ],
+  "additionalProperties": false
+}
+```
+
+### BugListItem
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/BugListItem",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "repositoryId": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "resultId": {
+      "type": "string"
+    },
+    "pullRequestId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "severity": {
+      "$ref": "#/schemas/Severity"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "fix_in_progress",
+        "resolved",
+        "wont_fix"
+      ]
+    },
+    "commitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "reproSteps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stackTrace": {
+      "type": "string"
+    },
+    "suspectedCause": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "taskId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "assigneeId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "repositoryName": {
+      "type": "string"
+    },
+    "pullRequestNumber": {
       "type": [
         "number",
         "null"
       ]
     },
-    "avgHealth": {
-      "type": "number"
+    "testName": {
+      "type": "string"
+    },
+    "taskStatus": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/TaskStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
     "id",
-    "name",
-    "industry",
-    "region",
-    "tier",
+    "orgId",
+    "repositoryId",
+    "runId",
+    "resultId",
+    "pullRequestId",
+    "title",
+    "severity",
     "status",
-    "applications",
-    "arrUsd",
-    "slaMetPct",
-    "slaStatus",
-    "openTasks",
-    "marginPct",
-    "avgHealth"
+    "commitSha",
+    "reproSteps",
+    "stackTrace",
+    "suspectedCause",
+    "createdAt",
+    "taskId",
+    "assigneeId",
+    "repositoryName",
+    "pullRequestNumber",
+    "testName",
+    "taskStatus"
+  ],
+  "additionalProperties": false
+}
+```
+
+### ChangePlanInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/ChangePlanInput",
+  "type": "object",
+  "properties": {
+    "plan": {
+      "$ref": "#/schemas/PlanId"
+    },
+    "billingCycle": {
+      "type": "string",
+      "enum": [
+        "monthly",
+        "annual"
+      ]
+    }
+  },
+  "required": [
+    "plan",
+    "billingCycle"
+  ],
+  "additionalProperties": false
+}
+```
+
+### ChangedFile
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/ChangedFile",
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string"
+    },
+    "additions": {
+      "type": "number"
+    },
+    "deletions": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "path",
+    "additions",
+    "deletions"
+  ],
+  "additionalProperties": false
+}
+```
+
+### CodeKeeperOverview
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/CodeKeeperOverview",
+  "type": "object",
+  "properties": {
+    "avgHealth": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "healthTrend": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/TrendPoint"
+      }
+    },
+    "repositories": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/RepositorySummary"
+      }
+    },
+    "findingsBySeverity": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "findingsByCategory": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "recentScans": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "repositoryId": {
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          },
+          "commitSha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{7,40}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "schedule",
+              "push",
+              "manual",
+              "onboarding"
+            ]
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "finishedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "findingsCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scoreAfter": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "scoreDelta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "config": {
+            "type": "object",
+            "properties": {
+              "ecosystems": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "checks": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "ecosystems",
+              "checks"
+            ],
+            "additionalProperties": false
+          },
+          "simulatedEndsAt": {
+            "type": "number"
+          },
+          "repositoryName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "repositoryId",
+          "orgId",
+          "commitSha",
+          "status",
+          "trigger",
+          "startedAt",
+          "finishedAt",
+          "findingsCount",
+          "scoreAfter",
+          "scoreDelta",
+          "changes",
+          "config",
+          "repositoryName"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "maintenance": {
+      "type": "object",
+      "properties": {
+        "prsCreated": {
+          "type": "number"
+        },
+        "prsMerged": {
+          "type": "number"
+        },
+        "acceptancePct": {
+          "type": "number"
+        },
+        "inProgress": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "prsCreated",
+        "prsMerged",
+        "acceptancePct",
+        "inProgress"
+      ],
+      "additionalProperties": false
+    },
+    "queue": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/FindingListItem"
+      }
+    }
+  },
+  "required": [
+    "avgHealth",
+    "healthTrend",
+    "repositories",
+    "findingsBySeverity",
+    "findingsByCategory",
+    "recentScans",
+    "maintenance",
+    "queue"
   ],
   "additionalProperties": false
 }
@@ -2544,78 +2856,302 @@ Reset all mock data to the seed (demo mode).
 }
 ```
 
-### Contract
+### ConnectReposInput
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/Contract",
+  "$id": "#/schemas/ConnectReposInput",
   "type": "object",
   "properties": {
-    "id": {
-      "type": "string"
+    "repositories": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
-    "orgId": {
-      "type": "string"
+    "projectId": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
-    "tier": {
-      "$ref": "#/schemas/Tier"
-    },
-    "pricePerAppMonthlyUsd": {
-      "type": "number",
-      "minimum": 0
-    },
-    "priorVendorHourlyRateUsd": {
-      "type": "number",
-      "minimum": 0
-    },
-    "priorVendorBaselineHoursPerAppMonthly": {
-      "default": 0,
-      "type": "number",
-      "minimum": 0
-    },
-    "slaTargets": {
-      "$ref": "#/schemas/SlaTargets"
-    },
-    "startDate": {
-      "type": "string",
-      "format": "date",
-      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-    },
-    "endDate": {
-      "type": "string",
-      "format": "date",
-      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+    "newProjectName": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
-    "id",
-    "orgId",
-    "tier",
-    "pricePerAppMonthlyUsd",
-    "priorVendorHourlyRateUsd",
-    "priorVendorBaselineHoursPerAppMonthly",
-    "slaTargets",
-    "startDate",
-    "endDate"
+    "repositories",
+    "projectId",
+    "newProjectName"
   ],
   "additionalProperties": false
 }
 ```
 
-### Criticality
+### ConnectReposResult
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/Criticality",
-  "type": "string",
-  "enum": [
-    "critical",
-    "high",
-    "medium",
-    "low"
-  ]
+  "$id": "#/schemas/ConnectReposResult",
+  "type": "object",
+  "properties": {
+    "projectId": {
+      "type": "string"
+    },
+    "repositoryIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "projectId",
+    "repositoryIds"
+  ],
+  "additionalProperties": false
+}
+```
+
+### CreateWorkspaceInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/CreateWorkspaceInput",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 48
+    },
+    "kind": {
+      "$ref": "#/schemas/WorkspaceKind"
+    },
+    "useCase": {
+      "type": "string",
+      "enum": [
+        "ship_ai_code_safely",
+        "verify_prs",
+        "maintain_repos",
+        "coordinate_agents",
+        "agency_client_repos",
+        "personal_projects"
+      ]
+    }
+  },
+  "required": [
+    "name",
+    "kind",
+    "useCase"
+  ],
+  "additionalProperties": false
+}
+```
+
+### Dependency
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Dependency",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "repositoryId": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "ecosystem": {
+      "type": "string",
+      "enum": [
+        "npm",
+        "pypi"
+      ]
+    },
+    "name": {
+      "type": "string"
+    },
+    "installedVersion": {
+      "type": "string"
+    },
+    "latestVersion": {
+      "type": "string"
+    },
+    "direct": {
+      "type": "boolean"
+    },
+    "license": {
+      "type": "string"
+    },
+    "manifest": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "repositoryId",
+    "orgId",
+    "ecosystem",
+    "name",
+    "installedVersion",
+    "latestVersion",
+    "direct",
+    "license",
+    "manifest"
+  ],
+  "additionalProperties": false
+}
+```
+
+### DevPilotOverview
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/DevPilotOverview",
+  "type": "object",
+  "properties": {
+    "kpis": {
+      "type": "object",
+      "properties": {
+        "running": {
+          "type": "number"
+        },
+        "waiting": {
+          "type": "number"
+        },
+        "reviewReady": {
+          "type": "number"
+        },
+        "successRatePct": {
+          "type": "number"
+        },
+        "avgCostUsd": {
+          "type": "number"
+        },
+        "spend30dUsd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "running",
+        "waiting",
+        "reviewReady",
+        "successRatePct",
+        "avgCostUsd",
+        "spend30dUsd"
+      ],
+      "additionalProperties": false
+    },
+    "board": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/schemas/TaskListItem"
+        }
+      }
+    },
+    "liveSessions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/SessionListItem"
+      }
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/schemas/Provider"
+          },
+          "name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "suspended"
+            ]
+          },
+          "maxConcurrent": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "defaultTimeoutMin": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "defaultBudgetUsd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "running": {
+            "type": "number"
+          },
+          "sessions30d": {
+            "type": "number"
+          },
+          "successRatePct": {
+            "type": "number"
+          },
+          "costUsd30d": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "orgId",
+          "provider",
+          "name",
+          "model",
+          "status",
+          "maxConcurrent",
+          "defaultTimeoutMin",
+          "defaultBudgetUsd",
+          "running",
+          "sessions30d",
+          "successRatePct",
+          "costUsd30d"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "kpis",
+    "board",
+    "liveSessions",
+    "agents"
+  ],
+  "additionalProperties": false
 }
 ```
 
@@ -2713,221 +3249,55 @@ Reset all mock data to the seed (demo mode).
 }
 ```
 
-### EvidenceEvent
+### EvidenceRef
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/EvidenceEvent",
+  "$id": "#/schemas/EvidenceRef",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "screenshot",
+        "trace",
+        "console",
+        "network",
+        "log",
+        "video"
+      ]
+    },
+    "label": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "label",
+    "ref"
+  ],
+  "additionalProperties": false
+}
+```
+
+### FailureClass
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/FailureClass",
   "type": "string",
   "enum": [
-    "task_created",
-    "plan_updated",
-    "plan_approved",
-    "agent_run_started",
-    "agent_run_stopped",
-    "retry_requested",
-    "manual_takeover",
-    "verification_passed",
-    "verification_failed",
-    "escalated",
-    "engineer_signed_off",
-    "pr_opened",
-    "client_approved",
-    "client_requested_changes",
-    "merged",
-    "closed"
+    "product_defect",
+    "test_defect",
+    "environment",
+    "flaky",
+    "infrastructure"
   ]
-}
-```
-
-### EvidenceItem
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/EvidenceItem",
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    },
-    "taskId": {
-      "type": "string"
-    },
-    "event": {
-      "$ref": "#/schemas/EvidenceEvent"
-    },
-    "actor": {
-      "$ref": "#/schemas/Actor"
-    },
-    "at": {
-      "type": "string",
-      "format": "date-time",
-      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-    },
-    "payload": {
-      "type": "object",
-      "propertyNames": {
-        "type": "string"
-      },
-      "additionalProperties": {}
-    },
-    "hash": {
-      "type": "string"
-    },
-    "prevHash": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "actorResolved": {
-      "$ref": "#/schemas/ResolvedActor"
-    },
-    "hashValid": {
-      "type": "boolean"
-    }
-  },
-  "required": [
-    "id",
-    "taskId",
-    "event",
-    "actor",
-    "at",
-    "payload",
-    "hash",
-    "prevHash",
-    "actorResolved",
-    "hashValid"
-  ],
-  "additionalProperties": false
-}
-```
-
-### EvidencePack
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/EvidencePack",
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    },
-    "task": {
-      "$ref": "#/schemas/TaskListItem"
-    },
-    "records": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/EvidenceItem"
-      }
-    },
-    "chainValid": {
-      "type": "boolean"
-    },
-    "verification": {
-      "anyOf": [
-        {
-          "$ref": "#/schemas/VerificationRun"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "agentLabel": {
-      "type": "string"
-    },
-    "signOff": {
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "by": {
-              "type": "string"
-            },
-            "at": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "by",
-            "at"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "clientApproval": {
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "by": {
-              "type": "string"
-            },
-            "at": {
-              "type": "string"
-            },
-            "decision": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "by",
-            "at",
-            "decision"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "diffSummary": {
-      "type": "object",
-      "properties": {
-        "files": {
-          "type": "number"
-        },
-        "additions": {
-          "type": "number"
-        },
-        "deletions": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "files",
-        "additions",
-        "deletions"
-      ],
-      "additionalProperties": false
-    },
-    "lastEventAt": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "id",
-    "task",
-    "records",
-    "chainValid",
-    "verification",
-    "agentLabel",
-    "signOff",
-    "clientApproval",
-    "diffSummary",
-    "lastEventAt"
-  ],
-  "additionalProperties": false
 }
 ```
 
@@ -2945,8 +3315,11 @@ Reset all mock data to the seed (demo mode).
     "repositoryId": {
       "type": "string"
     },
-    "dimension": {
-      "$ref": "#/schemas/HealthDimension"
+    "orgId": {
+      "type": "string"
+    },
+    "category": {
+      "$ref": "#/schemas/FindingCategory"
     },
     "severity": {
       "$ref": "#/schemas/Severity"
@@ -2954,94 +3327,589 @@ Reset all mock data to the seed (demo mode).
     "title": {
       "type": "string"
     },
-    "recommendation": {
-      "type": "string"
+    "package": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
-    "status": {
+    "dependencyId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "affectedVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fixedVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "advisoryId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "advisorySource": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sourceUrl": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "confidence": {
       "type": "string",
       "enum": [
-        "open",
-        "in_progress",
-        "resolved"
+        "high",
+        "medium",
+        "low"
       ]
+    },
+    "riskBand": {
+      "type": "string",
+      "enum": [
+        "urgent",
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "status": {
+      "$ref": "#/schemas/FindingStatus"
     },
     "detectedAt": {
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "lastSeenSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "evidence": {
+      "type": "string"
+    },
+    "suppression": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "by": {
+              "type": "string"
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "reason",
+            "by",
+            "at",
+            "expiresAt"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "taskId": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
     "id",
     "repositoryId",
-    "dimension",
+    "orgId",
+    "category",
     "severity",
     "title",
-    "recommendation",
+    "package",
+    "dependencyId",
+    "affectedVersion",
+    "fixedVersion",
+    "advisoryId",
+    "advisorySource",
+    "sourceUrl",
+    "confidence",
+    "riskBand",
     "status",
-    "detectedAt"
+    "detectedAt",
+    "lastSeenSha",
+    "evidence",
+    "suppression",
+    "taskId"
   ],
   "additionalProperties": false
 }
 ```
 
-### GitProvider
+### FindingActionInput
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/GitProvider",
-  "type": "string",
-  "enum": [
-    "github",
-    "gitlab",
-    "bitbucket",
-    "azure_devops"
+  "$id": "#/schemas/FindingActionInput",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "create_task"
+        },
+        "agentId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "suppress"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 5
+        },
+        "expiresInDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365
+        }
+      },
+      "required": [
+        "action",
+        "reason",
+        "expiresInDays"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "unsuppress"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
   ]
 }
 ```
 
-### GitRepoCandidate
+### FindingCategory
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/GitRepoCandidate",
+  "$id": "#/schemas/FindingCategory",
+  "type": "string",
+  "enum": [
+    "vulnerability",
+    "outdated",
+    "build",
+    "tests",
+    "docs"
+  ]
+}
+```
+
+### FindingDetail
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/FindingDetail",
+  "type": "object",
+  "properties": {
+    "finding": {
+      "$ref": "#/schemas/FindingListItem"
+    },
+    "dependency": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/Dependency"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "repository": {
+      "$ref": "#/schemas/Repository"
+    },
+    "task": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/TaskListItem"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "similar": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/FindingListItem"
+      }
+    }
+  },
+  "required": [
+    "finding",
+    "dependency",
+    "repository",
+    "task",
+    "similar"
+  ],
+  "additionalProperties": false
+}
+```
+
+### FindingListItem
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/FindingListItem",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "repositoryId": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "category": {
+      "$ref": "#/schemas/FindingCategory"
+    },
+    "severity": {
+      "$ref": "#/schemas/Severity"
+    },
+    "title": {
+      "type": "string"
+    },
+    "package": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dependencyId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "affectedVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fixedVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "advisoryId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "advisorySource": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sourceUrl": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "riskBand": {
+      "type": "string",
+      "enum": [
+        "urgent",
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "status": {
+      "$ref": "#/schemas/FindingStatus"
+    },
+    "detectedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "lastSeenSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "evidence": {
+      "type": "string"
+    },
+    "suppression": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "by": {
+              "type": "string"
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "reason",
+            "by",
+            "at",
+            "expiresAt"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "taskId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "repositoryName": {
+      "type": "string"
+    },
+    "projectName": {
+      "type": "string"
+    },
+    "taskStatus": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/TaskStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "repositoryId",
+    "orgId",
+    "category",
+    "severity",
+    "title",
+    "package",
+    "dependencyId",
+    "affectedVersion",
+    "fixedVersion",
+    "advisoryId",
+    "advisorySource",
+    "sourceUrl",
+    "confidence",
+    "riskBand",
+    "status",
+    "detectedAt",
+    "lastSeenSha",
+    "evidence",
+    "suppression",
+    "taskId",
+    "repositoryName",
+    "projectName",
+    "taskStatus"
+  ],
+  "additionalProperties": false
+}
+```
+
+### FindingStatus
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/FindingStatus",
+  "type": "string",
+  "enum": [
+    "open",
+    "task_created",
+    "suppressed",
+    "resolved"
+  ]
+}
+```
+
+### FirstRunInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/FirstRunInput",
+  "type": "object",
+  "properties": {
+    "repositoryId": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "test",
+        "scan"
+      ]
+    }
+  },
+  "required": [
+    "repositoryId",
+    "kind"
+  ],
+  "additionalProperties": false
+}
+```
+
+### FirstRunResult
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/FirstRunResult",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "test",
+        "scan"
+      ]
+    },
+    "id": {
+      "type": "string"
+    },
+    "href": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "href"
+  ],
+  "additionalProperties": false
+}
+```
+
+### GithubRepoCandidate
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/GithubRepoCandidate",
   "type": "object",
   "properties": {
     "fullName": {
       "type": "string"
     },
+    "private": {
+      "type": "boolean"
+    },
     "language": {
-      "$ref": "#/schemas/Language"
+      "type": "string"
     },
     "defaultBranch": {
       "type": "string"
     },
-    "private": {
-      "type": "boolean"
-    },
-    "lastPushAt": {
+    "pushedAt": {
       "type": "string"
+    },
+    "alreadyConnected": {
+      "type": "boolean"
     }
   },
   "required": [
     "fullName",
+    "private",
     "language",
     "defaultBranch",
-    "private",
-    "lastPushAt"
+    "pushedAt",
+    "alreadyConnected"
   ],
   "additionalProperties": false
 }
 ```
 
-### HealthBreakdown
+### Health
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/HealthBreakdown",
+  "$id": "#/schemas/Health",
   "type": "object",
   "properties": {
     "score": {
@@ -3049,34 +3917,73 @@ Reset all mock data to the seed (demo mode).
       "minimum": 0,
       "maximum": 100
     },
+    "scoreVersion": {
+      "type": "string"
+    },
     "dependencies": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "security": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "buildStability": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "tests": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "docs": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
     "score",
+    "scoreVersion",
     "dependencies",
     "security",
     "buildStability",
@@ -3084,23 +3991,6 @@ Reset all mock data to the seed (demo mode).
     "docs"
   ],
   "additionalProperties": false
-}
-```
-
-### HealthDimension
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/HealthDimension",
-  "type": "string",
-  "enum": [
-    "dependencies",
-    "security",
-    "buildStability",
-    "tests",
-    "docs"
-  ]
 }
 ```
 
@@ -3112,7 +4002,7 @@ Reset all mock data to the seed (demo mode).
   "$id": "#/schemas/HealthSnapshot",
   "type": "object",
   "properties": {
-    "applicationId": {
+    "repositoryId": {
       "type": "string"
     },
     "weekStart": {
@@ -3121,13 +4011,11 @@ Reset all mock data to the seed (demo mode).
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
     },
     "score": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
+      "type": "number"
     }
   },
   "required": [
-    "applicationId",
+    "repositoryId",
     "weekStart",
     "score"
   ],
@@ -3207,12 +4095,12 @@ Reset all mock data to the seed (demo mode).
   "type": "string",
   "enum": [
     "source_control",
-    "work_intake",
+    "agents",
+    "issues",
     "notifications",
-    "security",
-    "identity",
     "observability",
-    "agents"
+    "security",
+    "identity"
   ]
 }
 ```
@@ -3241,8 +4129,9 @@ Reset all mock data to the seed (demo mode).
       "type": "string",
       "enum": [
         "available",
-        "phase_2",
-        "phase_3"
+        "beta",
+        "coming_soon",
+        "enterprise"
       ]
     },
     "scopes": {
@@ -3250,6 +4139,9 @@ Reset all mock data to the seed (demo mode).
       "items": {
         "type": "string"
       }
+    },
+    "monogram": {
+      "type": "string"
     },
     "connection": {
       "anyOf": [
@@ -3269,24 +4161,73 @@ Reset all mock data to the seed (demo mode).
     "description",
     "availability",
     "scopes",
+    "monogram",
     "connection"
   ],
   "additionalProperties": false
 }
 ```
 
-### InviteUserInput
+### Invitation
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/InviteUserInput",
+  "$id": "#/schemas/Invitation",
   "type": "object",
   "properties": {
-    "name": {
-      "type": "string",
-      "minLength": 2
+    "id": {
+      "type": "string"
     },
+    "orgId": {
+      "type": "string"
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+    },
+    "role": {
+      "$ref": "#/schemas/Role"
+    },
+    "invitedBy": {
+      "type": "string"
+    },
+    "sentAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "accepted",
+        "revoked"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "email",
+    "role",
+    "invitedBy",
+    "sentAt",
+    "status"
+  ],
+  "additionalProperties": false
+}
+```
+
+### InviteInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/InviteInput",
+  "type": "object",
+  "properties": {
     "email": {
       "type": "string",
       "format": "email",
@@ -3295,14 +4236,13 @@ Reset all mock data to the seed (demo mode).
     "role": {
       "type": "string",
       "enum": [
-        "client_admin",
-        "client_approver",
-        "client_viewer"
+        "admin",
+        "member",
+        "viewer"
       ]
     }
   },
   "required": [
-    "name",
     "email",
     "role"
   ],
@@ -3310,55 +4250,115 @@ Reset all mock data to the seed (demo mode).
 }
 ```
 
-### Kpi
+### Invoice
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/Kpi",
+  "$id": "#/schemas/Invoice",
   "type": "object",
   "properties": {
-    "value": {
-      "type": "number"
+    "id": {
+      "type": "string"
     },
-    "previous": {
-      "type": [
-        "number",
-        "null"
+    "orgId": {
+      "type": "string"
+    },
+    "period": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "paid",
+        "open",
+        "void"
       ]
     },
-    "spark": {
-      "default": [],
-      "type": "array",
-      "items": {
-        "type": "number"
-      }
+    "subscriptionUsd": {
+      "type": "number"
+    },
+    "usageUsd": {
+      "type": "number"
+    },
+    "totalUsd": {
+      "type": "number"
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
     }
   },
   "required": [
-    "value",
-    "previous",
-    "spark"
+    "id",
+    "orgId",
+    "period",
+    "status",
+    "subscriptionUsd",
+    "usageUsd",
+    "totalUsd",
+    "issuedAt"
   ],
   "additionalProperties": false
 }
 ```
 
-### Language
+### LifecycleStep
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/Language",
-  "type": "string",
-  "enum": [
-    "java",
-    "dotnet",
-    "typescript",
-    "python",
-    "go",
-    "kotlin"
-  ]
+  "$id": "#/schemas/LifecycleStep",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string",
+      "enum": [
+        "plan",
+        "execute",
+        "propose",
+        "verify",
+        "remediate",
+        "review",
+        "merge",
+        "maintain"
+      ]
+    },
+    "label": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "done",
+        "current",
+        "upcoming",
+        "failed",
+        "skipped"
+      ]
+    },
+    "detail": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "href": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "key",
+    "label",
+    "state",
+    "detail",
+    "href"
+  ],
+  "additionalProperties": false
 }
 ```
 
@@ -3370,20 +4370,11 @@ Reset all mock data to the seed (demo mode).
   "$id": "#/schemas/LiveLog",
   "type": "object",
   "properties": {
-    "runId": {
-      "type": [
-        "string",
-        "null"
-      ]
+    "sessionId": {
+      "type": "string"
     },
     "status": {
-      "type": "string",
-      "enum": [
-        "idle",
-        "running",
-        "verifying",
-        "done"
-      ]
+      "type": "string"
     },
     "lines": {
       "type": "array",
@@ -3393,13 +4384,17 @@ Reset all mock data to the seed (demo mode).
     },
     "progressPct": {
       "type": "number"
+    },
+    "redactions": {
+      "type": "number"
     }
   },
   "required": [
-    "runId",
+    "sessionId",
     "status",
     "lines",
-    "progressPct"
+    "progressPct",
+    "redactions"
   ],
   "additionalProperties": false
 }
@@ -3428,7 +4423,8 @@ Reset all mock data to the seed (demo mode).
         "tool",
         "warn",
         "error",
-        "success"
+        "success",
+        "approval"
       ]
     },
     "text": {
@@ -3445,6 +4441,194 @@ Reset all mock data to the seed (demo mode).
 }
 ```
 
+### Member
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Member",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+    },
+    "title": {
+      "default": "",
+      "type": "string"
+    },
+    "githubLogin": {
+      "type": "string"
+    },
+    "role": {
+      "$ref": "#/schemas/Role"
+    },
+    "joinedAt": {
+      "type": "string"
+    },
+    "lastActiveAt": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "email",
+    "title",
+    "role",
+    "joinedAt",
+    "lastActiveAt"
+  ],
+  "additionalProperties": false
+}
+```
+
+### Members
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Members",
+  "type": "object",
+  "properties": {
+    "members": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/Member"
+      }
+    },
+    "invitations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/Invitation"
+      }
+    },
+    "seatsPurchased": {
+      "type": "number"
+    },
+    "seatsIncluded": {
+      "type": [
+        "number",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "members",
+    "invitations",
+    "seatsPurchased",
+    "seatsIncluded"
+  ],
+  "additionalProperties": false
+}
+```
+
+### Meter
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Meter",
+  "type": "string",
+  "enum": [
+    "agent_minutes",
+    "browser_minutes",
+    "test_runs",
+    "scan_runs",
+    "storage_gb"
+  ]
+}
+```
+
+### MeterUsage
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/MeterUsage",
+  "type": "object",
+  "properties": {
+    "meter": {
+      "$ref": "#/schemas/Meter"
+    },
+    "label": {
+      "type": "string"
+    },
+    "unit": {
+      "type": "string"
+    },
+    "used": {
+      "type": "number"
+    },
+    "included": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "projected": {
+      "type": "number"
+    },
+    "overageUnits": {
+      "type": "number"
+    },
+    "overageUsd": {
+      "type": "number"
+    },
+    "unitPriceUsd": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "meter",
+    "label",
+    "unit",
+    "used",
+    "included",
+    "projected",
+    "overageUnits",
+    "overageUsd",
+    "unitPriceUsd"
+  ],
+  "additionalProperties": false
+}
+```
+
+### NewProjectInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/NewProjectInput",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 2
+    },
+    "description": {
+      "default": "",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "description"
+  ],
+  "additionalProperties": false
+}
+```
+
 ### NewTaskInput
 
 ```json
@@ -3453,41 +4637,94 @@ Reset all mock data to the seed (demo mode).
   "$id": "#/schemas/NewTaskInput",
   "type": "object",
   "properties": {
-    "orgId": {
-      "type": "string",
-      "minLength": 1
-    },
     "repositoryId": {
       "type": "string",
       "minLength": 1
     },
-    "type": {
-      "$ref": "#/schemas/TaskType"
-    },
     "title": {
       "type": "string",
       "minLength": 5,
-      "maxLength": 120
+      "maxLength": 140
     },
     "description": {
       "type": "string",
-      "minLength": 10
+      "minLength": 15
     },
     "acceptanceCriteria": {
       "minItems": 1,
       "type": "array",
       "items": {
         "type": "string",
-        "minLength": 1
+        "minLength": 3
       }
     },
-    "agent": {
-      "$ref": "#/schemas/AgentKind"
+    "constraints": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 3
+      }
     },
     "priority": {
       "$ref": "#/schemas/Priority"
     },
-    "assigneeUserId": {
+    "agentId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "targetBranch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "budgetUsd": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 200
+    },
+    "timeoutMin": {
+      "type": "number",
+      "minimum": 5,
+      "maximum": 240
+    },
+    "launch": {
+      "type": "boolean"
+    },
+    "source": {
+      "default": "manual",
+      "type": "string",
+      "enum": [
+        "manual",
+        "github_issue",
+        "linear",
+        "jira",
+        "shipsafe_failure",
+        "codekeeper_finding"
+      ]
+    },
+    "sourceRef": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "bugId": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "findingId": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "parentTaskId": {
+      "default": null,
       "type": [
         "string",
         "null"
@@ -3495,14 +4732,51 @@ Reset all mock data to the seed (demo mode).
     }
   },
   "required": [
-    "orgId",
     "repositoryId",
-    "type",
     "title",
     "description",
     "acceptanceCriteria",
-    "agent",
-    "priority"
+    "constraints",
+    "priority",
+    "agentId",
+    "targetBranch",
+    "budgetUsd",
+    "timeoutMin",
+    "launch",
+    "source",
+    "sourceRef",
+    "bugId",
+    "findingId",
+    "parentTaskId"
+  ],
+  "additionalProperties": false
+}
+```
+
+### NewTestRunInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/NewTestRunInput",
+  "type": "object",
+  "properties": {
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "branch": {
+      "default": "main",
+      "type": "string",
+      "minLength": 1
+    },
+    "simulateFailure": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "repositoryId",
+    "branch"
   ],
   "additionalProperties": false
 }
@@ -3519,18 +4793,17 @@ Reset all mock data to the seed (demo mode).
     "id": {
       "type": "string"
     },
-    "audience": {
-      "type": "string",
-      "enum": [
-        "portal",
-        "console"
-      ]
-    },
     "orgId": {
+      "type": "string"
+    },
+    "userId": {
       "type": [
         "string",
         "null"
       ]
+    },
+    "kind": {
+      "type": "string"
     },
     "title": {
       "type": "string"
@@ -3552,8 +4825,9 @@ Reset all mock data to the seed (demo mode).
   },
   "required": [
     "id",
-    "audience",
     "orgId",
+    "userId",
+    "kind",
     "title",
     "body",
     "href",
@@ -3561,19 +4835,6 @@ Reset all mock data to the seed (demo mode).
     "read"
   ],
   "additionalProperties": false
-}
-```
-
-### NotificationList
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/NotificationList",
-  "type": "array",
-  "items": {
-    "$ref": "#/schemas/Notification"
-  }
 }
 ```
 
@@ -3597,496 +4858,6 @@ Reset all mock data to the seed (demo mode).
 }
 ```
 
-### OnboardingInput
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/OnboardingInput",
-  "type": "object",
-  "properties": {
-    "company": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 2
-        },
-        "industry": {
-          "type": "string",
-          "minLength": 1
-        },
-        "region": {
-          "type": "string",
-          "minLength": 2
-        },
-        "contactName": {
-          "type": "string",
-          "minLength": 2
-        },
-        "contactEmail": {
-          "type": "string",
-          "format": "email",
-          "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
-        }
-      },
-      "required": [
-        "name",
-        "industry",
-        "region",
-        "contactName",
-        "contactEmail"
-      ],
-      "additionalProperties": false
-    },
-    "provider": {
-      "$ref": "#/schemas/GitProvider"
-    },
-    "account": {
-      "type": "string",
-      "minLength": 1
-    },
-    "repositories": {
-      "minItems": 1,
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/GitRepoCandidate"
-      }
-    },
-    "mapping": {
-      "minItems": 1,
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "repoFullName": {
-            "type": "string"
-          },
-          "applicationName": {
-            "type": "string",
-            "minLength": 2
-          },
-          "criticality": {
-            "$ref": "#/schemas/Criticality"
-          }
-        },
-        "required": [
-          "repoFullName",
-          "applicationName",
-          "criticality"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "tier": {
-      "$ref": "#/schemas/Tier"
-    }
-  },
-  "required": [
-    "company",
-    "provider",
-    "account",
-    "repositories",
-    "mapping",
-    "tier"
-  ],
-  "additionalProperties": false
-}
-```
-
-### OnboardingResult
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/OnboardingResult",
-  "type": "object",
-  "properties": {
-    "organizationId": {
-      "type": "string"
-    },
-    "applicationIds": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "repositoryIds": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "scanIds": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    }
-  },
-  "required": [
-    "organizationId",
-    "applicationIds",
-    "repositoryIds",
-    "scanIds"
-  ],
-  "additionalProperties": false
-}
-```
-
-### OnboardingStatus
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/OnboardingStatus",
-  "type": "object",
-  "properties": {
-    "organization": {
-      "$ref": "#/schemas/Organization"
-    },
-    "scans": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "repositoryId": {
-            "type": "string"
-          },
-          "startedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-          },
-          "finishedAt": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "running",
-              "completed",
-              "failed"
-            ]
-          },
-          "healthScore": {
-            "anyOf": [
-              {
-                "type": "number",
-                "minimum": 0,
-                "maximum": 100
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "findingsCount": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "trigger": {
-            "type": "string",
-            "enum": [
-              "scheduled",
-              "manual",
-              "onboarding"
-            ]
-          },
-          "simulatedEndsAt": {
-            "type": "number"
-          },
-          "repositoryName": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "repositoryId",
-          "startedAt",
-          "finishedAt",
-          "status",
-          "healthScore",
-          "findingsCount",
-          "trigger",
-          "repositoryName"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "done": {
-      "type": "boolean"
-    },
-    "progressPct": {
-      "type": "number"
-    },
-    "applications": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/ApplicationSummary"
-      }
-    },
-    "topFindings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "repositoryId": {
-            "type": "string"
-          },
-          "dimension": {
-            "$ref": "#/schemas/HealthDimension"
-          },
-          "severity": {
-            "$ref": "#/schemas/Severity"
-          },
-          "title": {
-            "type": "string"
-          },
-          "recommendation": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "open",
-              "in_progress",
-              "resolved"
-            ]
-          },
-          "detectedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-          },
-          "repositoryName": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "repositoryId",
-          "dimension",
-          "severity",
-          "title",
-          "recommendation",
-          "status",
-          "detectedAt",
-          "repositoryName"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "plan90": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "window": {
-            "type": "string"
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "window",
-          "items"
-        ],
-        "additionalProperties": false
-      }
-    }
-  },
-  "required": [
-    "organization",
-    "scans",
-    "done",
-    "progressPct",
-    "applications",
-    "topFindings",
-    "plan90"
-  ],
-  "additionalProperties": false
-}
-```
-
-### OpsDashboard
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/OpsDashboard",
-  "type": "object",
-  "properties": {
-    "kpis": {
-      "type": "object",
-      "properties": {
-        "slaMetPct": {
-          "type": "number"
-        },
-        "tasksCompletedWeek": {
-          "type": "number"
-        },
-        "tasksCompletedPrevWeek": {
-          "type": "number"
-        },
-        "agentSharePct": {
-          "type": "number"
-        },
-        "avgCostPerTaskUsd": {
-          "type": "number"
-        },
-        "grossMarginPct": {
-          "type": "number"
-        },
-        "escalations": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "slaMetPct",
-        "tasksCompletedWeek",
-        "tasksCompletedPrevWeek",
-        "agentSharePct",
-        "avgCostPerTaskUsd",
-        "grossMarginPct",
-        "escalations"
-      ],
-      "additionalProperties": false
-    },
-    "tasksByStateByClient": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "propertyNames": {
-          "type": "string"
-        },
-        "additionalProperties": {
-          "type": [
-            "string",
-            "number"
-          ]
-        }
-      }
-    },
-    "agentShareTrend": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "week": {
-            "type": "string"
-          },
-          "agentPct": {
-            "type": "number"
-          },
-          "humanPct": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "week",
-          "agentPct",
-          "humanPct"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "slaRisk": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/TaskListItem"
-      }
-    },
-    "workload": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "user": {
-            "$ref": "#/schemas/User"
-          },
-          "active": {
-            "type": "number"
-          },
-          "awaitingReview": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "user",
-          "active",
-          "awaitingReview"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "costByAgent": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "agent": {
-            "$ref": "#/schemas/AgentKind"
-          },
-          "runs": {
-            "type": "number"
-          },
-          "costUsd": {
-            "type": "number"
-          },
-          "successPct": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "agent",
-          "runs",
-          "costUsd",
-          "successPct"
-        ],
-        "additionalProperties": false
-      }
-    }
-  },
-  "required": [
-    "kpis",
-    "tasksByStateByClient",
-    "agentShareTrend",
-    "slaRisk",
-    "workload",
-    "costByAgent"
-  ],
-  "additionalProperties": false
-}
-```
-
 ### Organization
 
 ```json
@@ -4098,196 +4869,189 @@ Reset all mock data to the seed (demo mode).
     "id": {
       "type": "string"
     },
+    "slug": {
+      "type": "string"
+    },
     "name": {
       "type": "string"
     },
-    "industry": {
-      "type": "string"
+    "kind": {
+      "$ref": "#/schemas/WorkspaceKind"
     },
-    "region": {
-      "type": "string"
+    "plan": {
+      "$ref": "#/schemas/PlanId"
     },
-    "tier": {
-      "$ref": "#/schemas/Tier"
+    "billingCycle": {
+      "type": "string",
+      "enum": [
+        "monthly",
+        "annual"
+      ]
     },
-    "headquarters": {
-      "type": "string"
-    },
-    "domain": {
-      "type": "string"
-    },
-    "onboardedAt": {
+    "createdAt": {
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
     },
-    "status": {
-      "default": "active",
-      "type": "string",
-      "enum": [
-        "active",
-        "onboarding",
-        "paused"
+    "useCase": {
+      "type": "string"
+    },
+    "seatsPurchased": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "monthlyLimitUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "hardCap": {
+          "type": "boolean"
+        },
+        "alertAtPct": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "monthlyLimitUsd",
+        "hardCap",
+        "alertAtPct"
+      ],
+      "additionalProperties": false
+    },
+    "trialEndsAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
       ]
     }
   },
   "required": [
     "id",
+    "slug",
     "name",
-    "industry",
-    "region",
-    "tier",
-    "status"
+    "kind",
+    "plan",
+    "billingCycle",
+    "createdAt",
+    "useCase",
+    "seatsPurchased",
+    "budget",
+    "trialEndsAt"
   ],
   "additionalProperties": false
 }
 ```
 
-### Plan
+### Overview
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/Plan",
+  "$id": "#/schemas/Overview",
   "type": "object",
   "properties": {
-    "steps": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "acceptanceCriteria": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "approvedBy": {
-      "type": [
-        "string",
-        "null"
-      ]
-    }
-  },
-  "required": [
-    "steps",
-    "acceptanceCriteria",
-    "approvedBy"
-  ],
-  "additionalProperties": false
-}
-```
-
-### PortalOverview
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/PortalOverview",
-  "type": "object",
-  "properties": {
-    "kpis": {
+    "northStar": {
       "type": "object",
       "properties": {
-        "applicationsCovered": {
-          "$ref": "#/schemas/Kpi"
+        "value": {
+          "type": "number"
         },
-        "slaMetPct": {
-          "type": "object",
-          "properties": {
-            "value": {
-              "type": "number"
-            },
-            "previous": {
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "spark": {
-              "default": [],
-              "type": "array",
-              "items": {
-                "type": "number"
-              }
-            },
-            "target": {
-              "type": "number"
-            }
-          },
-          "required": [
-            "value",
-            "previous",
-            "spark",
-            "target"
-          ],
-          "additionalProperties": false
+        "previous": {
+          "type": "number"
         },
-        "changesDelivered": {
-          "$ref": "#/schemas/Kpi"
-        },
-        "estimatedSavingUsd": {
-          "type": "object",
-          "properties": {
-            "value": {
-              "type": "number"
-            },
-            "previous": {
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "spark": {
-              "default": [],
-              "type": "array",
-              "items": {
-                "type": "number"
-              }
-            },
-            "pct": {
-              "type": "number"
-            }
-          },
-          "required": [
-            "value",
-            "previous",
-            "spark",
-            "pct"
-          ],
-          "additionalProperties": false
-        },
-        "openApprovals": {
-          "$ref": "#/schemas/Kpi"
+        "weekly": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/TrendPoint"
+          }
         }
       },
       "required": [
-        "applicationsCovered",
-        "slaMetPct",
-        "changesDelivered",
-        "estimatedSavingUsd",
-        "openApprovals"
+        "value",
+        "previous",
+        "weekly"
       ],
       "additionalProperties": false
     },
-    "healthTrend": {
+    "kpis": {
+      "type": "object",
+      "properties": {
+        "activeSessions": {
+          "type": "number"
+        },
+        "prsAwaitingReview": {
+          "type": "number"
+        },
+        "verificationCoveragePct": {
+          "type": "number"
+        },
+        "openBugs": {
+          "type": "number"
+        },
+        "avgHealth": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "passRatePct": {
+          "type": "number"
+        },
+        "spendUsd": {
+          "type": "number"
+        },
+        "budgetUsd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "activeSessions",
+        "prsAwaitingReview",
+        "verificationCoveragePct",
+        "openBugs",
+        "avgHealth",
+        "passRatePct",
+        "spendUsd",
+        "budgetUsd"
+      ],
+      "additionalProperties": false
+    },
+    "lifecycle": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "weekStart": {
+          "key": {
             "type": "string"
           },
-          "score": {
+          "label": {
+            "type": "string"
+          },
+          "count": {
             "type": "number"
+          },
+          "href": {
+            "type": "string"
           }
         },
         "required": [
-          "weekStart",
-          "score"
+          "key",
+          "label",
+          "count",
+          "href"
         ],
         "additionalProperties": false
       }
@@ -4303,14 +5067,477 @@ Reset all mock data to the seed (demo mode).
       "items": {
         "$ref": "#/schemas/ActivityItem"
       }
+    },
+    "liveSessions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/SessionListItem"
+      }
+    },
+    "modules": {
+      "type": "object",
+      "properties": {
+        "devpilot": {
+          "type": "object",
+          "properties": {
+            "running": {
+              "type": "number"
+            },
+            "reviewReady": {
+              "type": "number"
+            },
+            "successRatePct": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "running",
+            "reviewReady",
+            "successRatePct"
+          ],
+          "additionalProperties": false
+        },
+        "shipsafe": {
+          "type": "object",
+          "properties": {
+            "runsToday": {
+              "type": "number"
+            },
+            "passRatePct": {
+              "type": "number"
+            },
+            "openBugs": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "runsToday",
+            "passRatePct",
+            "openBugs"
+          ],
+          "additionalProperties": false
+        },
+        "codekeeper": {
+          "type": "object",
+          "properties": {
+            "avgHealth": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "openFindings": {
+              "type": "number"
+            },
+            "critical": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "avgHealth",
+            "openFindings",
+            "critical"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "devpilot",
+        "shipsafe",
+        "codekeeper"
+      ],
+      "additionalProperties": false
+    },
+    "setup": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "href": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "done",
+          "href"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
+    "northStar",
     "kpis",
-    "healthTrend",
+    "lifecycle",
     "attention",
-    "activity"
+    "activity",
+    "liveSessions",
+    "modules",
+    "setup"
   ],
+  "additionalProperties": false
+}
+```
+
+### Plan
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Plan",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "#/schemas/PlanId"
+    },
+    "name": {
+      "type": "string"
+    },
+    "priceMonthlyUsd": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "priceAnnualMonthlyUsd": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "tagline": {
+      "type": "string"
+    },
+    "audience": {
+      "type": "string"
+    },
+    "highlighted": {
+      "type": "boolean"
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "repositories": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "seats": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "agentMinutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "browserMinutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "testRuns": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "historyDays": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "concurrentSessions": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "projects",
+        "repositories",
+        "seats",
+        "agentMinutes",
+        "browserMinutes",
+        "testRuns",
+        "historyDays",
+        "concurrentSessions"
+      ],
+      "additionalProperties": false
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "priceMonthlyUsd",
+    "priceAnnualMonthlyUsd",
+    "tagline",
+    "audience",
+    "highlighted",
+    "limits",
+    "features"
+  ],
+  "additionalProperties": false
+}
+```
+
+### PlanId
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/PlanId",
+  "type": "string",
+  "enum": [
+    "free",
+    "developer",
+    "pro",
+    "team",
+    "business",
+    "enterprise"
+  ]
+}
+```
+
+### Policy
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Policy",
+  "type": "object",
+  "properties": {
+    "orgId": {
+      "type": "string"
+    },
+    "allowedProviders": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/Provider"
+      }
+    },
+    "requirePrApproval": {
+      "type": "boolean"
+    },
+    "protectedPaths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "networkAllowlist": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "requiredChecks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "maxFixRetries": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10
+    },
+    "sessionTimeoutMin": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "approvalRules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/ApprovalRule"
+      }
+    },
+    "suppressionMaxDays": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "retentionDays": {
+      "type": "object",
+      "properties": {
+        "logs": {
+          "type": "number"
+        },
+        "artifacts": {
+          "type": "number"
+        },
+        "audit": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "logs",
+        "artifacts",
+        "audit"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "orgId",
+    "allowedProviders",
+    "requirePrApproval",
+    "protectedPaths",
+    "networkAllowlist",
+    "requiredChecks",
+    "maxFixRetries",
+    "sessionTimeoutMin",
+    "approvalRules",
+    "suppressionMaxDays",
+    "retentionDays"
+  ],
+  "additionalProperties": false
+}
+```
+
+### PolicyCheck
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/PolicyCheck",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "pending",
+        "missing"
+      ]
+    },
+    "detail": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "required",
+    "status",
+    "detail"
+  ],
+  "additionalProperties": false
+}
+```
+
+### PolicyPatch
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/PolicyPatch",
+  "type": "object",
+  "properties": {
+    "allowedProviders": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/Provider"
+      }
+    },
+    "requirePrApproval": {
+      "type": "boolean"
+    },
+    "protectedPaths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "networkAllowlist": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "requiredChecks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "maxFixRetries": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10
+    },
+    "sessionTimeoutMin": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "approvalRules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/ApprovalRule"
+      }
+    },
+    "suppressionMaxDays": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "retentionDays": {
+      "type": "object",
+      "properties": {
+        "logs": {
+          "type": "number"
+        },
+        "artifacts": {
+          "type": "number"
+        },
+        "audit": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "logs",
+        "artifacts",
+        "audit"
+      ],
+      "additionalProperties": false
+    }
+  },
   "additionalProperties": false
 }
 ```
@@ -4323,10 +5550,199 @@ Reset all mock data to the seed (demo mode).
   "$id": "#/schemas/Priority",
   "type": "string",
   "enum": [
-    "p0",
-    "p1",
-    "p2",
-    "p3"
+    "urgent",
+    "high",
+    "medium",
+    "low"
+  ]
+}
+```
+
+### Project
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Project",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "color": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "client": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "name",
+    "description",
+    "color",
+    "createdAt"
+  ],
+  "additionalProperties": false
+}
+```
+
+### ProjectDetail
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/ProjectDetail",
+  "type": "object",
+  "properties": {
+    "project": {
+      "$ref": "#/schemas/ProjectSummary"
+    },
+    "repositories": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/RepositorySummary"
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/TaskListItem"
+      }
+    },
+    "pullRequests": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/PullRequestListItem"
+      }
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/TestRunListItem"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/FindingListItem"
+      }
+    }
+  },
+  "required": [
+    "project",
+    "repositories",
+    "tasks",
+    "pullRequests",
+    "runs",
+    "findings"
+  ],
+  "additionalProperties": false
+}
+```
+
+### ProjectSummary
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/ProjectSummary",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "color": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "client": {
+      "type": "string"
+    },
+    "repositories": {
+      "type": "number"
+    },
+    "healthScore": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "openPrs": {
+      "type": "number"
+    },
+    "failingChecks": {
+      "type": "number"
+    },
+    "activeSessions": {
+      "type": "number"
+    },
+    "openFindings": {
+      "type": "number"
+    },
+    "verifiedThisMonth": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "name",
+    "description",
+    "color",
+    "createdAt",
+    "repositories",
+    "healthScore",
+    "openPrs",
+    "failingChecks",
+    "activeSessions",
+    "openFindings",
+    "verifiedThisMonth"
+  ],
+  "additionalProperties": false
+}
+```
+
+### Provider
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Provider",
+  "type": "string",
+  "enum": [
+    "claude_code",
+    "openai_codex",
+    "devin",
+    "cursor"
   ]
 }
 ```
@@ -4342,17 +5758,64 @@ Reset all mock data to the seed (demo mode).
     "id": {
       "type": "string"
     },
-    "taskId": {
+    "orgId": {
+      "type": "string"
+    },
+    "repositoryId": {
       "type": "string"
     },
     "number": {
       "type": "integer",
-      "exclusiveMinimum": 0,
+      "minimum": -9007199254740991,
       "maximum": 9007199254740991
+    },
+    "title": {
+      "type": "string"
     },
     "url": {
       "type": "string",
       "format": "uri"
+    },
+    "author": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "person",
+            "agent"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "openedBy": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "baseSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "headSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
     },
     "status": {
       "type": "string",
@@ -4362,25 +5825,502 @@ Reset all mock data to the seed (demo mode).
         "closed"
       ]
     },
+    "openedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "mergedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mergedBy": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "aiAuthoredPct": {
       "type": "number",
       "minimum": 0,
       "maximum": 100
     },
-    "openedAt": {
+    "additions": {
+      "type": "number"
+    },
+    "deletions": {
+      "type": "number"
+    },
+    "changedFiles": {
+      "type": "number"
+    },
+    "taskId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checkStatus": {
+      "$ref": "#/schemas/TestRunStatus"
+    },
+    "reviewers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reviewState": {
       "type": "string",
-      "format": "date-time",
-      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+      "enum": [
+        "review_requested",
+        "approved",
+        "changes_requested"
+      ]
+    },
+    "latestRunId": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
     "id",
-    "taskId",
+    "orgId",
+    "repositoryId",
     "number",
+    "title",
     "url",
+    "author",
+    "openedBy",
+    "branch",
+    "baseSha",
+    "headSha",
     "status",
+    "openedAt",
+    "mergedAt",
+    "mergedBy",
     "aiAuthoredPct",
-    "openedAt"
+    "additions",
+    "deletions",
+    "changedFiles",
+    "taskId",
+    "checkStatus",
+    "reviewers",
+    "reviewState",
+    "latestRunId"
+  ],
+  "additionalProperties": false
+}
+```
+
+### PullRequestDetail
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/PullRequestDetail",
+  "type": "object",
+  "properties": {
+    "pullRequest": {
+      "$ref": "#/schemas/PullRequestListItem"
+    },
+    "repository": {
+      "$ref": "#/schemas/Repository"
+    },
+    "task": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/Task"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "session": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/Session"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/TestRunListItem"
+      }
+    },
+    "latestResults": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/schemas/TestOutcome"
+          },
+          "classification": {
+            "anyOf": [
+              {
+                "$ref": "#/schemas/FailureClass"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "durationMs": {
+            "type": "number"
+          },
+          "retries": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/schemas/EvidenceRef"
+            }
+          },
+          "firstFailedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suiteName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "runId",
+          "suiteId",
+          "name",
+          "outcome",
+          "classification",
+          "durationMs",
+          "retries",
+          "error",
+          "evidence",
+          "firstFailedAt",
+          "suiteName"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "bugs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/Bug"
+      }
+    },
+    "releasePolicy": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/PolicyCheck"
+      }
+    },
+    "mergeable": {
+      "type": "boolean"
+    },
+    "mergeBlockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "pullRequest",
+    "repository",
+    "task",
+    "session",
+    "runs",
+    "latestResults",
+    "bugs",
+    "releasePolicy",
+    "mergeable",
+    "mergeBlockers"
+  ],
+  "additionalProperties": false
+}
+```
+
+### PullRequestListItem
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/PullRequestListItem",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "repositoryId": {
+      "type": "string"
+    },
+    "number": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "title": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "author": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "person",
+            "agent"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "openedBy": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "baseSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "headSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "merged",
+        "closed"
+      ]
+    },
+    "openedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "mergedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mergedBy": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "aiAuthoredPct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "additions": {
+      "type": "number"
+    },
+    "deletions": {
+      "type": "number"
+    },
+    "changedFiles": {
+      "type": "number"
+    },
+    "taskId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checkStatus": {
+      "$ref": "#/schemas/TestRunStatus"
+    },
+    "reviewers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reviewState": {
+      "type": "string",
+      "enum": [
+        "review_requested",
+        "approved",
+        "changes_requested"
+      ]
+    },
+    "latestRunId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "repositoryName": {
+      "type": "string"
+    },
+    "authorResolved": {
+      "$ref": "#/schemas/ResolvedActor"
+    },
+    "taskTitle": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "latestRun": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/TestRun"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "openBugs": {
+      "type": "number"
+    },
+    "requiredChecksMet": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "repositoryId",
+    "number",
+    "title",
+    "url",
+    "author",
+    "openedBy",
+    "branch",
+    "baseSha",
+    "headSha",
+    "status",
+    "openedAt",
+    "mergedAt",
+    "mergedBy",
+    "aiAuthoredPct",
+    "additions",
+    "deletions",
+    "changedFiles",
+    "taskId",
+    "checkStatus",
+    "reviewers",
+    "reviewState",
+    "latestRunId",
+    "repositoryName",
+    "authorResolved",
+    "taskTitle",
+    "latestRun",
+    "openBugs",
+    "requiredChecksMet"
+  ],
+  "additionalProperties": false
+}
+```
+
+### RepoConfigInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/RepoConfigInput",
+  "type": "object",
+  "properties": {
+    "testCommands": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "scanSchedule": {
+      "type": "string",
+      "enum": [
+        "daily",
+        "weekly",
+        "on_push",
+        "off"
+      ]
+    }
+  },
+  "required": [
+    "testCommands",
+    "scanSchedule"
   ],
   "additionalProperties": false
 }
@@ -4397,52 +6337,126 @@ Reset all mock data to the seed (demo mode).
     "id": {
       "type": "string"
     },
-    "applicationId": {
+    "projectId": {
+      "type": "string"
+    },
+    "orgId": {
       "type": "string"
     },
     "provider": {
-      "$ref": "#/schemas/GitProvider"
+      "type": "string",
+      "const": "github"
+    },
+    "fullName": {
+      "type": "string"
     },
     "url": {
       "type": "string",
       "format": "uri"
     },
-    "language": {
-      "$ref": "#/schemas/Language"
-    },
     "defaultBranch": {
       "type": "string"
     },
-    "health": {
-      "$ref": "#/schemas/HealthBreakdown"
+    "private": {
+      "type": "boolean"
     },
-    "coveragePct": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
-    "flakyTests": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+    "frameworks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
-    "lastScanAt": {
+    "ecosystems": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "npm",
+          "pypi"
+        ]
+      }
+    },
+    "testCommands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ciWorkflows": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "indexedSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "indexedAt": {
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "indexStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "indexing",
+        "ready",
+        "error"
+      ]
+    },
+    "indexReadyAt": {
+      "type": "number"
+    },
+    "fileCount": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "hasDocs": {
+      "type": "boolean"
+    },
+    "scanSchedule": {
+      "type": "string",
+      "enum": [
+        "daily",
+        "weekly",
+        "on_push",
+        "off"
+      ]
+    },
+    "health": {
+      "$ref": "#/schemas/Health"
     }
   },
   "required": [
     "id",
-    "applicationId",
+    "projectId",
+    "orgId",
     "provider",
+    "fullName",
     "url",
-    "language",
     "defaultBranch",
-    "health",
-    "coveragePct",
-    "flakyTests",
-    "lastScanAt"
+    "private",
+    "languages",
+    "frameworks",
+    "ecosystems",
+    "testCommands",
+    "ciWorkflows",
+    "indexedSha",
+    "indexedAt",
+    "indexStatus",
+    "fileCount",
+    "hasDocs",
+    "scanSchedule",
+    "health"
   ],
   "additionalProperties": false
 }
@@ -4459,10 +6473,25 @@ Reset all mock data to the seed (demo mode).
     "repository": {
       "$ref": "#/schemas/RepositorySummary"
     },
+    "suites": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/TestSuite"
+      }
+    },
     "findings": {
       "type": "array",
       "items": {
         "$ref": "#/schemas/Finding"
+      }
+    },
+    "dependencies": {
+      "type": "number"
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/HealthSnapshot"
       }
     },
     "scans": {
@@ -4471,42 +6500,28 @@ Reset all mock data to the seed (demo mode).
         "$ref": "#/schemas/Scan"
       }
     },
-    "tasks": {
+    "runs": {
       "type": "array",
       "items": {
-        "$ref": "#/schemas/TaskListItem"
+        "$ref": "#/schemas/TestRunListItem"
       }
     },
-    "flakyTests": {
+    "pullRequests": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "failureRatePct": {
-            "type": "number"
-          },
-          "lastSeen": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "failureRatePct",
-          "lastSeen"
-        ],
-        "additionalProperties": false
+        "$ref": "#/schemas/PullRequestListItem"
       }
     }
   },
   "required": [
     "repository",
+    "suites",
     "findings",
+    "dependencies",
+    "history",
     "scans",
-    "tasks",
-    "flakyTests"
+    "runs",
+    "pullRequests"
   ],
   "additionalProperties": false
 }
@@ -4523,61 +6538,133 @@ Reset all mock data to the seed (demo mode).
     "id": {
       "type": "string"
     },
-    "applicationId": {
+    "projectId": {
+      "type": "string"
+    },
+    "orgId": {
       "type": "string"
     },
     "provider": {
-      "$ref": "#/schemas/GitProvider"
+      "type": "string",
+      "const": "github"
+    },
+    "fullName": {
+      "type": "string"
     },
     "url": {
       "type": "string",
       "format": "uri"
     },
-    "language": {
-      "$ref": "#/schemas/Language"
-    },
     "defaultBranch": {
       "type": "string"
     },
-    "health": {
-      "$ref": "#/schemas/HealthBreakdown"
+    "private": {
+      "type": "boolean"
     },
-    "coveragePct": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
-    "flakyTests": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+    "frameworks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
-    "lastScanAt": {
+    "ecosystems": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "npm",
+          "pypi"
+        ]
+      }
+    },
+    "testCommands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ciWorkflows": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "indexedSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "indexedAt": {
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
     },
-    "name": {
-      "type": "string"
+    "indexStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "indexing",
+        "ready",
+        "error"
+      ]
     },
-    "applicationName": {
-      "type": "string"
+    "indexReadyAt": {
+      "type": "number"
     },
-    "organizationId": {
-      "type": "string"
+    "fileCount": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
     },
-    "organizationName": {
+    "hasDocs": {
+      "type": "boolean"
+    },
+    "scanSchedule": {
+      "type": "string",
+      "enum": [
+        "daily",
+        "weekly",
+        "on_push",
+        "off"
+      ]
+    },
+    "health": {
+      "$ref": "#/schemas/Health"
+    },
+    "projectName": {
       "type": "string"
     },
     "openFindings": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
+      "type": "number"
     },
     "criticalFindings": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
+      "type": "number"
+    },
+    "suites": {
+      "type": "number"
+    },
+    "lastRunStatus": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lastRunAt": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "openPrs": {
+      "type": "number"
+    },
+    "healthDelta": {
+      "type": "number"
     },
     "scanRunning": {
       "type": "boolean"
@@ -4585,21 +6672,33 @@ Reset all mock data to the seed (demo mode).
   },
   "required": [
     "id",
-    "applicationId",
+    "projectId",
+    "orgId",
     "provider",
+    "fullName",
     "url",
-    "language",
     "defaultBranch",
+    "private",
+    "languages",
+    "frameworks",
+    "ecosystems",
+    "testCommands",
+    "ciWorkflows",
+    "indexedSha",
+    "indexedAt",
+    "indexStatus",
+    "fileCount",
+    "hasDocs",
+    "scanSchedule",
     "health",
-    "coveragePct",
-    "flakyTests",
-    "lastScanAt",
-    "name",
-    "applicationName",
-    "organizationId",
-    "organizationName",
+    "projectName",
     "openFindings",
     "criticalFindings",
+    "suites",
+    "lastRunStatus",
+    "lastRunAt",
+    "openPrs",
+    "healthDelta",
     "scanRunning"
   ],
   "additionalProperties": false
@@ -4642,6 +6741,34 @@ Reset all mock data to the seed (demo mode).
 }
 ```
 
+### ReviewInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/ReviewInput",
+  "type": "object",
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "changes_requested"
+      ]
+    },
+    "comment": {
+      "default": "",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision",
+    "comment"
+  ],
+  "additionalProperties": false
+}
+```
+
 ### Role
 
 ```json
@@ -4650,121 +6777,28 @@ Reset all mock data to the seed (demo mode).
   "$id": "#/schemas/Role",
   "type": "string",
   "enum": [
-    "client_admin",
-    "client_approver",
-    "client_viewer",
-    "fp_engineer",
-    "fp_manager"
+    "owner",
+    "admin",
+    "member",
+    "viewer"
   ]
 }
 ```
 
-### SavingsReport
+### RoleChangeInput
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/SavingsReport",
+  "$id": "#/schemas/RoleChangeInput",
   "type": "object",
   "properties": {
-    "month": {
-      "type": "string"
-    },
-    "availableMonths": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "byType": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "$ref": "#/schemas/TaskType"
-          },
-          "count": {
-            "type": "number"
-          },
-          "hours": {
-            "type": "number"
-          },
-          "priorVendorCostUsd": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "type",
-          "count",
-          "hours",
-          "priorVendorCostUsd"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "totals": {
-      "type": "object",
-      "properties": {
-        "tasks": {
-          "type": "number"
-        },
-        "hours": {
-          "type": "number"
-        },
-        "priorVendorRateUsd": {
-          "type": "number"
-        },
-        "priorVendorCostUsd": {
-          "type": "number"
-        },
-        "baselineHours": {
-          "type": "number"
-        },
-        "baselineCostUsd": {
-          "type": "number"
-        },
-        "forgePilotFeeUsd": {
-          "type": "number"
-        },
-        "savingUsd": {
-          "type": "number"
-        },
-        "savingPct": {
-          "type": "number"
-        },
-        "applications": {
-          "type": "number"
-        },
-        "pricePerAppMonthlyUsd": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "tasks",
-        "hours",
-        "priorVendorRateUsd",
-        "priorVendorCostUsd",
-        "baselineHours",
-        "baselineCostUsd",
-        "forgePilotFeeUsd",
-        "savingUsd",
-        "savingPct",
-        "applications",
-        "pricePerAppMonthlyUsd"
-      ],
-      "additionalProperties": false
-    },
-    "agentSharePct": {
-      "type": "number"
+    "role": {
+      "$ref": "#/schemas/Role"
     }
   },
   "required": [
-    "month",
-    "availableMonths",
-    "byType",
-    "totals",
-    "agentSharePct"
+    "role"
   ],
   "additionalProperties": false
 }
@@ -4784,6 +6818,31 @@ Reset all mock data to the seed (demo mode).
     "repositoryId": {
       "type": "string"
     },
+    "orgId": {
+      "type": "string"
+    },
+    "commitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "failed"
+      ]
+    },
+    "trigger": {
+      "type": "string",
+      "enum": [
+        "schedule",
+        "push",
+        "manual",
+        "onboarding"
+      ]
+    },
     "startedAt": {
       "type": "string",
       "format": "date-time",
@@ -4801,31 +6860,11 @@ Reset all mock data to the seed (demo mode).
         }
       ]
     },
-    "status": {
-      "type": "string",
-      "enum": [
-        "running",
-        "completed",
-        "failed"
-      ]
-    },
-    "healthScore": {
-      "anyOf": [
-        {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 100
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "findingsCount": {
       "anyOf": [
         {
           "type": "integer",
-          "minimum": 0,
+          "minimum": -9007199254740991,
           "maximum": 9007199254740991
         },
         {
@@ -4833,13 +6872,45 @@ Reset all mock data to the seed (demo mode).
         }
       ]
     },
-    "trigger": {
-      "type": "string",
-      "enum": [
-        "scheduled",
-        "manual",
-        "onboarding"
+    "scoreAfter": {
+      "type": [
+        "number",
+        "null"
       ]
+    },
+    "scoreDelta": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "ecosystems": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "ecosystems",
+        "checks"
+      ],
+      "additionalProperties": false
     },
     "simulatedEndsAt": {
       "type": "number"
@@ -4848,12 +6919,17 @@ Reset all mock data to the seed (demo mode).
   "required": [
     "id",
     "repositoryId",
+    "orgId",
+    "commitSha",
+    "status",
+    "trigger",
     "startedAt",
     "finishedAt",
-    "status",
-    "healthScore",
     "findingsCount",
-    "trigger"
+    "scoreAfter",
+    "scoreDelta",
+    "changes",
+    "config"
   ],
   "additionalProperties": false
 }
@@ -4870,10 +6946,13 @@ Reset all mock data to the seed (demo mode).
     "kind": {
       "type": "string",
       "enum": [
-        "client",
-        "application",
+        "project",
+        "repository",
         "task",
-        "repository"
+        "pull_request",
+        "bug",
+        "finding",
+        "session"
       ]
     },
     "id": {
@@ -4908,32 +6987,538 @@ Reset all mock data to the seed (demo mode).
   "$id": "#/schemas/Session",
   "type": "object",
   "properties": {
-    "user": {
-      "$ref": "#/schemas/User"
+    "id": {
+      "type": "string"
     },
-    "organization": {
+    "taskId": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "agentId": {
+      "type": "string"
+    },
+    "attempt": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "status": {
+      "$ref": "#/schemas/SessionStatus"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "endedAt": {
       "anyOf": [
         {
-          "$ref": "#/schemas/Organization"
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
         },
         {
           "type": "null"
         }
       ]
     },
-    "personas": {
+    "tokensIn": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "tokensOut": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "costUsd": {
+      "type": "number"
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "changedFiles": {
       "type": "array",
       "items": {
-        "$ref": "#/schemas/User"
+        "$ref": "#/schemas/ChangedFile"
+      }
+    },
+    "headSha": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "waitingFor": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "approval",
+                "clarification"
+              ]
+            },
+            "approvalId": {
+              "type": "string"
+            },
+            "question": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "logSeed": {
+      "type": "number"
+    },
+    "simulated": {
+      "type": "boolean"
+    },
+    "simulatedEndsAt": {
+      "type": "number"
+    },
+    "simulateFailure": {
+      "type": "boolean"
+    },
+    "approvalCheckpointAt": {
+      "type": "number"
+    },
+    "pausedRemainingMs": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "id",
+    "taskId",
+    "orgId",
+    "agentId",
+    "attempt",
+    "status",
+    "startedAt",
+    "endedAt",
+    "tokensIn",
+    "tokensOut",
+    "costUsd",
+    "summary",
+    "changedFiles",
+    "headSha",
+    "waitingFor",
+    "notes",
+    "logSeed",
+    "simulated"
+  ],
+  "additionalProperties": false
+}
+```
+
+### SessionDetail
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/SessionDetail",
+  "type": "object",
+  "properties": {
+    "session": {
+      "$ref": "#/schemas/SessionListItem"
+    },
+    "task": {
+      "$ref": "#/schemas/Task"
+    },
+    "workspace": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/Workspace"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "approvals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/Approval"
+      }
+    },
+    "otherAttempts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/Session"
       }
     }
   },
   "required": [
-    "user",
-    "organization",
-    "personas"
+    "session",
+    "task",
+    "workspace",
+    "approvals",
+    "otherAttempts"
   ],
   "additionalProperties": false
+}
+```
+
+### SessionInfo
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/SessionInfo",
+  "type": "object",
+  "properties": {
+    "user": {
+      "$ref": "#/schemas/User"
+    },
+    "workspace": {
+      "$ref": "#/schemas/Organization"
+    },
+    "role": {
+      "$ref": "#/schemas/Role"
+    },
+    "workspaces": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/WorkspaceMembership"
+      }
+    },
+    "personas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+          },
+          "title": {
+            "default": "",
+            "type": "string"
+          },
+          "githubLogin": {
+            "type": "string"
+          },
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "orgId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "role": {
+                  "$ref": "#/schemas/Role"
+                }
+              },
+              "required": [
+                "orgId",
+                "name",
+                "role"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email",
+          "title",
+          "workspaces"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "pendingApprovals": {
+          "type": "number"
+        },
+        "reviewReady": {
+          "type": "number"
+        },
+        "unreadNotifications": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "pendingApprovals",
+        "reviewReady",
+        "unreadNotifications"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "user",
+    "workspace",
+    "role",
+    "workspaces",
+    "personas",
+    "counts"
+  ],
+  "additionalProperties": false
+}
+```
+
+### SessionInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/SessionInput",
+  "type": "object",
+  "properties": {
+    "answer": {
+      "type": "string",
+      "minLength": 2
+    }
+  },
+  "required": [
+    "answer"
+  ],
+  "additionalProperties": false
+}
+```
+
+### SessionListItem
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/SessionListItem",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "taskId": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "agentId": {
+      "type": "string"
+    },
+    "attempt": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "status": {
+      "$ref": "#/schemas/SessionStatus"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "endedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tokensIn": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "tokensOut": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "costUsd": {
+      "type": "number"
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "changedFiles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/ChangedFile"
+      }
+    },
+    "headSha": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "waitingFor": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "approval",
+                "clarification"
+              ]
+            },
+            "approvalId": {
+              "type": "string"
+            },
+            "question": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "logSeed": {
+      "type": "number"
+    },
+    "simulated": {
+      "type": "boolean"
+    },
+    "simulatedEndsAt": {
+      "type": "number"
+    },
+    "simulateFailure": {
+      "type": "boolean"
+    },
+    "approvalCheckpointAt": {
+      "type": "number"
+    },
+    "pausedRemainingMs": {
+      "type": "number"
+    },
+    "taskTitle": {
+      "type": "string"
+    },
+    "repositoryName": {
+      "type": "string"
+    },
+    "agent": {
+      "$ref": "#/schemas/Agent"
+    },
+    "durationSec": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "workspaceState": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "taskId",
+    "orgId",
+    "agentId",
+    "attempt",
+    "status",
+    "startedAt",
+    "endedAt",
+    "tokensIn",
+    "tokensOut",
+    "costUsd",
+    "summary",
+    "changedFiles",
+    "headSha",
+    "waitingFor",
+    "notes",
+    "logSeed",
+    "simulated",
+    "taskTitle",
+    "repositoryName",
+    "agent",
+    "durationSec",
+    "workspaceState"
+  ],
+  "additionalProperties": false
+}
+```
+
+### SessionStatus
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/SessionStatus",
+  "type": "string",
+  "enum": [
+    "queued",
+    "running",
+    "waiting",
+    "completed",
+    "failed",
+    "cancelled"
+  ]
 }
 ```
 
@@ -4953,198 +7538,375 @@ Reset all mock data to the seed (demo mode).
 }
 ```
 
-### SlaMetric
+### ShipSafeOverview
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/SlaMetric",
+  "$id": "#/schemas/ShipSafeOverview",
   "type": "object",
   "properties": {
-    "key": {
-      "type": "string"
-    },
-    "label": {
-      "type": "string"
-    },
-    "unit": {
-      "type": "string",
-      "enum": [
-        "hours",
-        "minutes",
-        "pct"
-      ]
-    },
-    "target": {
-      "type": "number"
-    },
-    "actual": {
-      "type": [
-        "number",
-        "null"
-      ]
-    },
-    "lowerIsBetter": {
-      "type": "boolean"
-    },
-    "met": {
-      "type": [
-        "boolean",
-        "null"
-      ]
-    },
-    "samples": {
-      "type": "number"
-    }
-  },
-  "required": [
-    "key",
-    "label",
-    "unit",
-    "target",
-    "actual",
-    "lowerIsBetter",
-    "met",
-    "samples"
-  ],
-  "additionalProperties": false
-}
-```
-
-### SlaReport
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/SlaReport",
-  "type": "object",
-  "properties": {
-    "metrics": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/SlaMetric"
-      }
-    },
-    "breaches": {
+    "passRateTrend": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "taskId": {
+          "date": {
             "type": "string"
           },
-          "title": {
-            "type": "string"
+          "passRatePct": {
+            "type": "number"
           },
-          "applicationName": {
-            "type": "string"
-          },
-          "dueAt": {
-            "type": "string"
-          },
-          "resolvedAt": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "reason": {
-            "type": "string"
+          "runs": {
+            "type": "number"
           }
         },
         "required": [
-          "taskId",
-          "title",
-          "applicationName",
-          "dueAt",
-          "resolvedAt",
-          "reason"
+          "date",
+          "passRatePct",
+          "runs"
         ],
         "additionalProperties": false
       }
     },
-    "slaMetPct": {
-      "type": "number"
+    "kpis": {
+      "type": "object",
+      "properties": {
+        "runs7d": {
+          "type": "number"
+        },
+        "passRatePct": {
+          "type": "number"
+        },
+        "medianDurationSec": {
+          "type": "number"
+        },
+        "flakyRatePct": {
+          "type": "number"
+        },
+        "openBugs": {
+          "type": "number"
+        },
+        "verificationCoveragePct": {
+          "type": "number"
+        },
+        "actionableDefectPct": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "runs7d",
+        "passRatePct",
+        "medianDurationSec",
+        "flakyRatePct",
+        "openBugs",
+        "verificationCoveragePct",
+        "actionableDefectPct"
+      ],
+      "additionalProperties": false
     },
-    "breachCount": {
-      "type": "number"
+    "failureBreakdown": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "classification": {
+            "$ref": "#/schemas/FailureClass"
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "classification",
+          "count"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "repositories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "repositoryId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "passRatePct": {
+            "type": "number"
+          },
+          "runs": {
+            "type": "number"
+          },
+          "lastStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "repositoryId",
+          "name",
+          "passRatePct",
+          "runs",
+          "lastStatus"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "recentRuns": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/TestRunListItem"
+      }
+    },
+    "openBugs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/BugListItem"
+      }
     }
   },
   "required": [
-    "metrics",
-    "breaches",
-    "slaMetPct",
-    "breachCount"
+    "passRateTrend",
+    "kpis",
+    "failureBreakdown",
+    "repositories",
+    "recentRuns",
+    "openBugs"
   ],
   "additionalProperties": false
 }
 ```
 
-### SlaStatus
+### SignInInput
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/SlaStatus",
-  "type": "string",
-  "enum": [
-    "on_track",
-    "at_risk",
-    "breached"
-  ]
-}
-```
-
-### SlaTargets
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/SlaTargets",
-  "type": "object",
-  "properties": {
-    "criticalCvePatchHours": {
-      "type": "number",
-      "exclusiveMinimum": 0
-    },
-    "verificationMinutesP90": {
-      "type": "number",
-      "exclusiveMinimum": 0
-    },
-    "approvalTurnaroundHours": {
-      "type": "number",
-      "exclusiveMinimum": 0
-    },
-    "slaMetTargetPct": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
-    }
-  },
-  "required": [
-    "criticalCvePatchHours",
-    "verificationMinutesP90",
-    "approvalTurnaroundHours",
-    "slaMetTargetPct"
-  ],
-  "additionalProperties": false
-}
-```
-
-### SwitchSessionInput
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/SwitchSessionInput",
+  "$id": "#/schemas/SignInInput",
   "type": "object",
   "properties": {
     "userId": {
+      "type": "string"
+    },
+    "orgId": {
       "type": "string"
     }
   },
   "required": [
     "userId"
+  ],
+  "additionalProperties": false
+}
+```
+
+### SignUpInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/SignUpInput",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 2
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "github",
+        "email"
+      ]
+    }
+  },
+  "required": [
+    "name",
+    "email",
+    "method"
+  ],
+  "additionalProperties": false
+}
+```
+
+### SwitchWorkspaceInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/SwitchWorkspaceInput",
+  "type": "object",
+  "properties": {
+    "orgId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "orgId"
+  ],
+  "additionalProperties": false
+}
+```
+
+### Task
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/Task",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "projectId": {
+      "type": "string"
+    },
+    "repositoryId": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "priority": {
+      "$ref": "#/schemas/Priority"
+    },
+    "status": {
+      "$ref": "#/schemas/TaskStatus"
+    },
+    "source": {
+      "$ref": "#/schemas/TaskSource"
+    },
+    "sourceRef": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "createdBy": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "agentId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "baseSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "targetBranch": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "budgetUsd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "timeoutMin": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "parentTaskId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "bugId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "findingId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pullRequestId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "assigneeId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "clarityWarning": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "projectId",
+    "repositoryId",
+    "title",
+    "description",
+    "acceptanceCriteria",
+    "constraints",
+    "priority",
+    "status",
+    "source",
+    "sourceRef",
+    "createdBy",
+    "createdAt",
+    "agentId",
+    "baseSha",
+    "targetBranch",
+    "branch",
+    "budgetUsd",
+    "timeoutMin",
+    "parentTaskId",
+    "bugId",
+    "findingId",
+    "pullRequestId",
+    "assigneeId",
+    "clarityWarning"
   ],
   "additionalProperties": false
 }
@@ -5158,16 +7920,12 @@ Reset all mock data to the seed (demo mode).
   "$id": "#/schemas/TaskAction",
   "type": "string",
   "enum": [
-    "save_plan",
-    "approve_plan",
     "launch",
-    "stop",
+    "cancel",
     "retry",
-    "take_over",
-    "sign_off",
-    "open_pr",
-    "escalate",
-    "close"
+    "create_pr",
+    "mark_ready",
+    "archive"
   ]
 }
 ```
@@ -5186,35 +7944,8 @@ Reset all mock data to the seed (demo mode).
     "notes": {
       "type": "string"
     },
-    "reviewedDiff": {
-      "type": "boolean"
-    },
     "simulateFailure": {
       "type": "boolean"
-    },
-    "plan": {
-      "type": "object",
-      "properties": {
-        "steps": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "acceptanceCriteria": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      },
-      "required": [
-        "steps",
-        "acceptanceCriteria"
-      ],
-      "additionalProperties": false
     }
   },
   "required": [
@@ -5235,38 +7966,7 @@ Reset all mock data to the seed (demo mode).
     "task": {
       "$ref": "#/schemas/TaskListItem"
     },
-    "application": {
-      "$ref": "#/schemas/Application"
-    },
-    "repository": {
-      "$ref": "#/schemas/Repository"
-    },
-    "organization": {
-      "$ref": "#/schemas/Organization"
-    },
-    "contract": {
-      "anyOf": [
-        {
-          "$ref": "#/schemas/Contract"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "runs": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/AgentRun"
-      }
-    },
-    "verifications": {
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/VerificationRun"
-      }
-    },
-    "approvals": {
+    "sessions": {
       "type": "array",
       "items": {
         "type": "object",
@@ -5277,28 +7977,130 @@ Reset all mock data to the seed (demo mode).
           "taskId": {
             "type": "string"
           },
-          "approverUserId": {
+          "orgId": {
             "type": "string"
           },
-          "decision": {
-            "type": "string",
-            "enum": [
-              "approved",
-              "changes_requested"
-            ]
+          "agentId": {
+            "type": "string"
           },
-          "at": {
+          "attempt": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "status": {
+            "$ref": "#/schemas/SessionStatus"
+          },
+          "startedAt": {
             "type": "string",
             "format": "date-time",
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
           },
-          "comment": {
-            "type": "string"
-          },
-          "approver": {
+          "endedAt": {
             "anyOf": [
               {
-                "$ref": "#/schemas/User"
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tokensIn": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "tokensOut": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changedFiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/schemas/ChangedFile"
+            }
+          },
+          "headSha": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{7,40}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "waitingFor": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "approval",
+                      "clarification"
+                    ]
+                  },
+                  "approvalId": {
+                    "type": "string"
+                  },
+                  "question": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "logSeed": {
+            "type": "number"
+          },
+          "simulated": {
+            "type": "boolean"
+          },
+          "simulatedEndsAt": {
+            "type": "number"
+          },
+          "simulateFailure": {
+            "type": "boolean"
+          },
+          "approvalCheckpointAt": {
+            "type": "number"
+          },
+          "pausedRemainingMs": {
+            "type": "number"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "$ref": "#/schemas/Workspace"
               },
               {
                 "type": "null"
@@ -5309,60 +8111,144 @@ Reset all mock data to the seed (demo mode).
         "required": [
           "id",
           "taskId",
-          "approverUserId",
-          "decision",
-          "at",
-          "comment",
-          "approver"
+          "orgId",
+          "agentId",
+          "attempt",
+          "status",
+          "startedAt",
+          "endedAt",
+          "tokensIn",
+          "tokensOut",
+          "costUsd",
+          "summary",
+          "changedFiles",
+          "headSha",
+          "waitingFor",
+          "notes",
+          "logSeed",
+          "simulated",
+          "workspace"
         ],
         "additionalProperties": false
       }
     },
-    "evidence": {
+    "approvals": {
       "type": "array",
       "items": {
-        "$ref": "#/schemas/EvidenceItem"
+        "$ref": "#/schemas/Approval"
       }
     },
-    "chainValid": {
-      "type": "boolean"
-    },
-    "signOff": {
+    "pullRequest": {
       "anyOf": [
         {
-          "type": "object",
-          "properties": {
-            "by": {
-              "type": "string"
-            },
-            "at": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "by",
-            "at"
-          ],
-          "additionalProperties": false
+          "$ref": "#/schemas/PullRequestListItem"
         },
         {
           "type": "null"
         }
       ]
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/TestRunListItem"
+      }
+    },
+    "bug": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/Bug"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "finding": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/Finding"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "parent": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/Task"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "children": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/Task"
+      }
+    },
+    "lifecycle": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/LifecycleStep"
+      }
+    },
+    "activity": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/ActivityItem"
+      }
+    },
+    "policyPreview": {
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requiresApproval": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "prohibited": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "budgetRemainingUsd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "allowed",
+        "requiresApproval",
+        "prohibited",
+        "budgetRemainingUsd"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
     "task",
-    "application",
-    "repository",
-    "organization",
-    "contract",
-    "runs",
-    "verifications",
+    "sessions",
     "approvals",
-    "evidence",
-    "chainValid",
-    "signOff"
+    "pullRequest",
+    "runs",
+    "bug",
+    "finding",
+    "parent",
+    "children",
+    "lifecycle",
+    "activity",
+    "policyPreview"
   ],
   "additionalProperties": false
 }
@@ -5379,104 +8265,133 @@ Reset all mock data to the seed (demo mode).
     "id": {
       "type": "string"
     },
-    "repositoryId": {
-      "type": "string"
-    },
-    "applicationId": {
-      "type": "string"
-    },
     "orgId": {
       "type": "string"
     },
-    "type": {
-      "$ref": "#/schemas/TaskType"
+    "projectId": {
+      "type": "string"
+    },
+    "repositoryId": {
+      "type": "string"
     },
     "title": {
       "type": "string"
     },
-    "summary": {
+    "description": {
       "type": "string"
     },
-    "source": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": [
-            "ticket",
-            "scan",
-            "manual"
-          ]
-        },
-        "ref": {
-          "type": "string"
-        },
-        "url": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "kind",
-        "ref"
-      ],
-      "additionalProperties": false
+    "acceptanceCriteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
-    "state": {
-      "$ref": "#/schemas/TaskState"
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "priority": {
       "$ref": "#/schemas/Priority"
     },
-    "slaDueAt": {
-      "type": "string",
-      "format": "date-time",
-      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    "status": {
+      "$ref": "#/schemas/TaskStatus"
     },
-    "assigneeUserId": {
+    "source": {
+      "$ref": "#/schemas/TaskSource"
+    },
+    "sourceRef": {
       "type": [
         "string",
         "null"
       ]
     },
-    "agent": {
-      "$ref": "#/schemas/AgentKind"
+    "createdBy": {
+      "type": "string"
     },
     "createdAt": {
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
     },
-    "aiAuthoredPct": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
-    },
-    "plan": {
-      "$ref": "#/schemas/Plan"
-    },
-    "estimatedHours": {
-      "type": "number",
-      "minimum": 0
-    },
-    "escalationReason": {
-      "type": "string"
-    },
-    "manualTakeoverBy": {
+    "agentId": {
       "type": [
         "string",
         "null"
       ]
     },
-    "applicationName": {
+    "baseSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "targetBranch": {
       "type": "string"
     },
-    "organizationName": {
+    "branch": {
       "type": "string"
+    },
+    "budgetUsd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "timeoutMin": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "parentTaskId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "bugId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "findingId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pullRequestId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "assigneeId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "clarityWarning": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "repositoryName": {
       "type": "string"
     },
-    "assignee": {
+    "projectName": {
+      "type": "string"
+    },
+    "agent": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/Agent"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "createdByUser": {
       "anyOf": [
         {
           "$ref": "#/schemas/User"
@@ -5486,25 +8401,18 @@ Reset all mock data to the seed (demo mode).
         }
       ]
     },
-    "latestRun": {
+    "latestSession": {
       "anyOf": [
         {
-          "$ref": "#/schemas/AgentRun"
+          "$ref": "#/schemas/Session"
         },
         {
           "type": "null"
         }
       ]
     },
-    "latestVerification": {
-      "anyOf": [
-        {
-          "$ref": "#/schemas/VerificationRun"
-        },
-        {
-          "type": "null"
-        }
-      ]
+    "attempts": {
+      "type": "number"
     },
     "pullRequest": {
       "anyOf": [
@@ -5516,115 +8424,112 @@ Reset all mock data to the seed (demo mode).
         }
       ]
     },
-    "slaRisk": {
-      "$ref": "#/schemas/TaskSlaRisk"
-    },
-    "lastEvent": {
-      "anyOf": [
-        {
-          "$ref": "#/schemas/EvidenceItem"
-        },
-        {
-          "type": "null"
-        }
+    "latestRunStatus": {
+      "type": [
+        "string",
+        "null"
       ]
     },
-    "attempts": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
+    "costUsd": {
+      "type": "number"
+    },
+    "verified": {
+      "type": "boolean"
     }
   },
   "required": [
     "id",
-    "repositoryId",
-    "applicationId",
     "orgId",
-    "type",
+    "projectId",
+    "repositoryId",
     "title",
-    "summary",
-    "source",
-    "state",
+    "description",
+    "acceptanceCriteria",
+    "constraints",
     "priority",
-    "slaDueAt",
-    "assigneeUserId",
-    "agent",
+    "status",
+    "source",
+    "sourceRef",
+    "createdBy",
     "createdAt",
-    "aiAuthoredPct",
-    "plan",
-    "estimatedHours",
-    "applicationName",
-    "organizationName",
+    "agentId",
+    "baseSha",
+    "targetBranch",
+    "branch",
+    "budgetUsd",
+    "timeoutMin",
+    "parentTaskId",
+    "bugId",
+    "findingId",
+    "pullRequestId",
+    "assigneeId",
+    "clarityWarning",
     "repositoryName",
-    "assignee",
-    "latestRun",
-    "latestVerification",
+    "projectName",
+    "agent",
+    "createdByUser",
+    "latestSession",
+    "attempts",
     "pullRequest",
-    "slaRisk",
-    "lastEvent",
-    "attempts"
+    "latestRunStatus",
+    "costUsd",
+    "verified"
   ],
   "additionalProperties": false
 }
 ```
 
-### TaskSlaRisk
+### TaskSource
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/TaskSlaRisk",
+  "$id": "#/schemas/TaskSource",
   "type": "string",
   "enum": [
-    "ok",
-    "at_risk",
-    "breached",
-    "met",
-    "missed"
+    "manual",
+    "github_issue",
+    "linear",
+    "jira",
+    "shipsafe_failure",
+    "codekeeper_finding"
   ]
 }
 ```
 
-### TaskState
+### TaskStatus
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/TaskState",
+  "$id": "#/schemas/TaskStatus",
   "type": "string",
   "enum": [
-    "created",
-    "planned",
-    "plan_approved",
+    "draft",
+    "queued",
     "running",
+    "waiting_input",
     "verifying",
-    "retrying",
-    "escalated",
-    "awaiting_review",
-    "signed_off",
-    "pr_open",
-    "client_approved",
-    "merged",
-    "closed",
+    "review_ready",
+    "completed",
     "failed",
-    "rejected"
+    "cancelled"
   ]
 }
 ```
 
-### TaskType
+### TestOutcome
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/TaskType",
+  "$id": "#/schemas/TestOutcome",
   "type": "string",
   "enum": [
-    "dependency_upgrade",
-    "cve_patch",
-    "bug_fix",
-    "enhancement",
-    "test_coverage"
+    "passed",
+    "failed",
+    "flaky",
+    "skipped"
   ]
 }
 ```
@@ -5637,52 +8542,1054 @@ Reset all mock data to the seed (demo mode).
   "$id": "#/schemas/TestResult",
   "type": "object",
   "properties": {
+    "id": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "suiteId": {
+      "type": "string"
+    },
     "name": {
       "type": "string"
     },
-    "suite": {
-      "type": "string"
+    "outcome": {
+      "$ref": "#/schemas/TestOutcome"
     },
-    "status": {
-      "type": "string",
-      "enum": [
-        "passed",
-        "failed",
-        "skipped"
+    "classification": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/FailureClass"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "durationMs": {
-      "type": "number",
-      "minimum": 0
+      "type": "number"
     },
-    "flaky": {
-      "default": false,
-      "type": "boolean"
+    "retries": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/EvidenceRef"
+      }
+    },
+    "firstFailedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
+    "id",
+    "runId",
+    "suiteId",
     "name",
-    "suite",
-    "status",
+    "outcome",
+    "classification",
     "durationMs",
-    "flaky"
+    "retries",
+    "error",
+    "evidence",
+    "firstFailedAt"
   ],
   "additionalProperties": false
 }
 ```
 
-### Tier
+### TestRun
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/Tier",
+  "$id": "#/schemas/TestRun",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "repositoryId": {
+      "type": "string"
+    },
+    "pullRequestId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "trigger": {
+      "type": "string"
+    },
+    "headSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "baseSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "python": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "worker": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "url",
+        "node",
+        "python",
+        "worker",
+        "region"
+      ],
+      "additionalProperties": false
+    },
+    "status": {
+      "$ref": "#/schemas/TestRunStatus"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "finishedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "durationSec": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "selectedSuites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "suiteId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "suiteId",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "retestOf": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checkRun": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "conclusion": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "success",
+                    "failure",
+                    "neutral"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "detailsUrl": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "conclusion",
+            "detailsUrl"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "totals": {
+      "type": "object",
+      "properties": {
+        "passed": {
+          "type": "number"
+        },
+        "failed": {
+          "type": "number"
+        },
+        "flaky": {
+          "type": "number"
+        },
+        "skipped": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "passed",
+        "failed",
+        "flaky",
+        "skipped"
+      ],
+      "additionalProperties": false
+    },
+    "billedBrowserMinutes": {
+      "type": "number"
+    },
+    "infraError": {
+      "type": "string"
+    },
+    "simulatedEndsAt": {
+      "type": "number"
+    },
+    "simulateFailure": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "repositoryId",
+    "pullRequestId",
+    "trigger",
+    "headSha",
+    "baseSha",
+    "branch",
+    "environment",
+    "status",
+    "startedAt",
+    "finishedAt",
+    "durationSec",
+    "selectedSuites",
+    "retestOf",
+    "checkRun",
+    "totals",
+    "billedBrowserMinutes"
+  ],
+  "additionalProperties": false
+}
+```
+
+### TestRunDetail
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/TestRunDetail",
+  "type": "object",
+  "properties": {
+    "run": {
+      "$ref": "#/schemas/TestRunListItem"
+    },
+    "repository": {
+      "$ref": "#/schemas/Repository"
+    },
+    "pullRequest": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/PullRequest"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "suites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "repositoryId": {
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "unit",
+              "playwright",
+              "api"
+            ]
+          },
+          "command": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "pathRules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "timeoutMin": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "owner": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "flakyRatePct": {
+            "type": "number",
+            "minimum": 0
+          },
+          "testCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "reason": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "number"
+          },
+          "failed": {
+            "type": "number"
+          },
+          "flaky": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "repositoryId",
+          "orgId",
+          "name",
+          "type",
+          "command",
+          "environment",
+          "pathRules",
+          "timeoutMin",
+          "owner",
+          "enabled",
+          "required",
+          "flakyRatePct",
+          "testCount",
+          "reason",
+          "passed",
+          "failed",
+          "flaky"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/schemas/TestOutcome"
+          },
+          "classification": {
+            "anyOf": [
+              {
+                "$ref": "#/schemas/FailureClass"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "durationMs": {
+            "type": "number"
+          },
+          "retries": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/schemas/EvidenceRef"
+            }
+          },
+          "firstFailedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suiteName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "runId",
+          "suiteId",
+          "name",
+          "outcome",
+          "classification",
+          "durationMs",
+          "retries",
+          "error",
+          "evidence",
+          "firstFailedAt",
+          "suiteName"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "previous": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/TestRun"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "comparison": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "newlyFailing": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fixed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "stillFailing": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "newlyFailing",
+            "fixed",
+            "stillFailing"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "bugs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/Bug"
+      }
+    },
+    "workerLog": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/LogLine"
+      }
+    }
+  },
+  "required": [
+    "run",
+    "repository",
+    "pullRequest",
+    "suites",
+    "results",
+    "previous",
+    "comparison",
+    "bugs",
+    "workerLog"
+  ],
+  "additionalProperties": false
+}
+```
+
+### TestRunListItem
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/TestRunListItem",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "repositoryId": {
+      "type": "string"
+    },
+    "pullRequestId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "trigger": {
+      "type": "string"
+    },
+    "headSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "baseSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "python": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "worker": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "url",
+        "node",
+        "python",
+        "worker",
+        "region"
+      ],
+      "additionalProperties": false
+    },
+    "status": {
+      "$ref": "#/schemas/TestRunStatus"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "finishedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "durationSec": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "selectedSuites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "suiteId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "suiteId",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "retestOf": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checkRun": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "conclusion": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "success",
+                    "failure",
+                    "neutral"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "detailsUrl": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "conclusion",
+            "detailsUrl"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "totals": {
+      "type": "object",
+      "properties": {
+        "passed": {
+          "type": "number"
+        },
+        "failed": {
+          "type": "number"
+        },
+        "flaky": {
+          "type": "number"
+        },
+        "skipped": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "passed",
+        "failed",
+        "flaky",
+        "skipped"
+      ],
+      "additionalProperties": false
+    },
+    "billedBrowserMinutes": {
+      "type": "number"
+    },
+    "infraError": {
+      "type": "string"
+    },
+    "simulatedEndsAt": {
+      "type": "number"
+    },
+    "simulateFailure": {
+      "type": "boolean"
+    },
+    "repositoryName": {
+      "type": "string"
+    },
+    "pullRequestNumber": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "pullRequestTitle": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "failureClasses": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "number"
+      }
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "repositoryId",
+    "pullRequestId",
+    "trigger",
+    "headSha",
+    "baseSha",
+    "branch",
+    "environment",
+    "status",
+    "startedAt",
+    "finishedAt",
+    "durationSec",
+    "selectedSuites",
+    "retestOf",
+    "checkRun",
+    "totals",
+    "billedBrowserMinutes",
+    "repositoryName",
+    "pullRequestNumber",
+    "pullRequestTitle",
+    "failureClasses"
+  ],
+  "additionalProperties": false
+}
+```
+
+### TestRunStatus
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/TestRunStatus",
   "type": "string",
   "enum": [
-    "maintain",
-    "maintain_assure",
-    "full_run"
+    "queued",
+    "running",
+    "passed",
+    "failed",
+    "errored"
   ]
+}
+```
+
+### TestSuite
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/TestSuite",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "repositoryId": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "unit",
+        "playwright",
+        "api"
+      ]
+    },
+    "command": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "string"
+    },
+    "pathRules": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "timeoutMin": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "owner": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "flakyRatePct": {
+      "type": "number",
+      "minimum": 0
+    },
+    "testCount": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "id",
+    "repositoryId",
+    "orgId",
+    "name",
+    "type",
+    "command",
+    "environment",
+    "pathRules",
+    "timeoutMin",
+    "owner",
+    "enabled",
+    "required",
+    "flakyRatePct",
+    "testCount"
+  ],
+  "additionalProperties": false
+}
+```
+
+### TestSuiteInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/TestSuiteInput",
+  "type": "object",
+  "properties": {
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 2
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "unit",
+        "playwright",
+        "api"
+      ]
+    },
+    "command": {
+      "type": "string",
+      "minLength": 2
+    },
+    "environment": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pathRules": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "timeoutMin": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 120
+    },
+    "required": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "repositoryId",
+    "name",
+    "type",
+    "command",
+    "environment",
+    "pathRules",
+    "timeoutMin",
+    "required"
+  ],
+  "additionalProperties": false
+}
+```
+
+### TestSuitePatch
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/TestSuitePatch",
+  "type": "object",
+  "properties": {
+    "enabled": {
+      "type": "boolean"
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "command": {
+      "type": "string",
+      "minLength": 2
+    },
+    "timeoutMin": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 120
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+### TrendPoint
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/TrendPoint",
+  "type": "object",
+  "properties": {
+    "date": {
+      "type": "string"
+    },
+    "value": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "date",
+    "value"
+  ],
+  "additionalProperties": false
 }
 ```
 
@@ -5705,180 +9612,170 @@ Reset all mock data to the seed (demo mode).
       "format": "email",
       "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
     },
-    "role": {
-      "$ref": "#/schemas/Role"
-    },
-    "orgId": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "title": {
+      "default": "",
       "type": "string"
     },
-    "status": {
-      "default": "active",
-      "type": "string",
-      "enum": [
-        "active",
-        "invited"
-      ]
+    "githubLogin": {
+      "type": "string"
     }
   },
   "required": [
     "id",
     "name",
     "email",
-    "role",
-    "orgId",
-    "status"
+    "title"
   ],
   "additionalProperties": false
 }
 ```
 
-### VerificationRun
+### Workspace
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "#/schemas/VerificationRun",
+  "$id": "#/schemas/Workspace",
   "type": "object",
   "properties": {
     "id": {
       "type": "string"
     },
-    "agentRunId": {
+    "sessionId": {
       "type": "string"
     },
-    "testsRun": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+    "orgId": {
+      "type": "string"
     },
-    "testsPassed": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
-    },
-    "testsFailed": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
-    },
-    "securityFindings": {
-      "type": "object",
-      "properties": {
-        "critical": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        },
-        "high": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        },
-        "medium": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        }
-      },
-      "required": [
-        "critical",
-        "high",
-        "medium"
-      ],
-      "additionalProperties": false
-    },
-    "riskScore": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
-    },
-    "status": {
+    "runtime": {
       "type": "string",
       "enum": [
-        "running",
-        "passed",
-        "failed"
+        "container",
+        "worktree"
       ]
     },
-    "durationMin": {
-      "type": "number",
-      "minimum": 0
+    "image": {
+      "type": "string"
     },
-    "startedAt": {
+    "state": {
+      "type": "string",
+      "enum": [
+        "provisioning",
+        "active",
+        "cleaned"
+      ]
+    },
+    "cpu": {
+      "type": "number"
+    },
+    "memoryGb": {
+      "type": "number"
+    },
+    "diskGb": {
+      "type": "number"
+    },
+    "networkPolicy": {
+      "type": "string",
+      "enum": [
+        "none",
+        "allowlist",
+        "open"
+      ]
+    },
+    "createdAt": {
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
     },
-    "coveragePct": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
+    "cleanupAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
     },
-    "testResults": {
-      "default": [],
-      "type": "array",
-      "items": {
-        "$ref": "#/schemas/TestResult"
-      }
+    "credentials": {
+      "type": "string"
     },
-    "artifacts": {
-      "default": [],
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "screenshot",
-              "log",
-              "sbom",
-              "report"
-            ]
-          },
-          "label": {
-            "type": "string"
-          },
-          "url": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "kind",
-          "label",
-          "url"
-        ],
-        "additionalProperties": false
-      }
+    "baseSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
     },
-    "scanners": {
-      "default": [],
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
+    "branch": {
+      "type": "string"
     }
   },
   "required": [
     "id",
-    "agentRunId",
-    "testsRun",
-    "testsPassed",
-    "testsFailed",
-    "securityFindings",
-    "riskScore",
-    "status",
-    "durationMin",
-    "testResults",
-    "artifacts",
-    "scanners"
+    "sessionId",
+    "orgId",
+    "runtime",
+    "image",
+    "state",
+    "cpu",
+    "memoryGb",
+    "diskGb",
+    "networkPolicy",
+    "createdAt",
+    "cleanupAt",
+    "credentials",
+    "baseSha",
+    "branch"
   ],
+  "additionalProperties": false
+}
+```
+
+### WorkspaceKind
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/WorkspaceKind",
+  "type": "string",
+  "enum": [
+    "personal",
+    "team",
+    "agency"
+  ]
+}
+```
+
+### WorkspaceMembership
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/WorkspaceMembership",
+  "type": "object",
+  "properties": {
+    "organization": {
+      "$ref": "#/schemas/Organization"
+    },
+    "role": {
+      "$ref": "#/schemas/Role"
+    }
+  },
+  "required": [
+    "organization",
+    "role"
+  ],
+  "additionalProperties": false
+}
+```
+
+### WorkspacePatch
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/WorkspacePatch",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 48
+    }
+  },
   "additionalProperties": false
 }
 ```

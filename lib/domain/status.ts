@@ -1,54 +1,71 @@
-import type { TaskState } from "@/lib/schemas";
+import type { FailureClass, SessionStatus, Severity, TaskStatus, TestRunStatus } from "@/lib/schemas";
 
 export type Tone = "success" | "warning" | "danger" | "neutral" | "info" | "accent";
 
-export const TASK_STATE_TONE: Record<TaskState, Tone> = {
-  created: "neutral",
-  planned: "neutral",
-  plan_approved: "info",
+export const TASK_STATUS_TONE: Record<TaskStatus, Tone> = {
+  draft: "neutral",
+  queued: "neutral",
   running: "accent",
-  verifying: "accent",
-  retrying: "warning",
-  escalated: "danger",
-  awaiting_review: "warning",
-  signed_off: "success",
-  pr_open: "warning",
-  client_approved: "success",
-  merged: "success",
-  closed: "neutral",
+  waiting_input: "warning",
+  verifying: "info",
+  review_ready: "success",
+  completed: "success",
   failed: "danger",
-  rejected: "danger",
+  cancelled: "neutral",
 };
 
-export type HealthBand = "healthy" | "at_risk" | "poor";
+export const SESSION_STATUS_TONE: Record<SessionStatus, Tone> = {
+  queued: "neutral",
+  running: "accent",
+  waiting: "warning",
+  completed: "success",
+  failed: "danger",
+  cancelled: "neutral",
+};
+export const SESSION_STATUS_LABEL: Record<SessionStatus, string> = {
+  queued: "Queued",
+  running: "Running",
+  waiting: "Waiting for input",
+  completed: "Completed",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
 
-/** ≥80 green, 60–79 amber, <60 red (frontend spec §HealthScore). */
-export function healthBand(score: number): HealthBand {
-  if (score >= 80) return "healthy";
-  if (score >= 60) return "at_risk";
-  return "poor";
-}
+export const RUN_STATUS_TONE: Record<TestRunStatus, Tone> = {
+  queued: "neutral",
+  running: "accent",
+  passed: "success",
+  failed: "danger",
+  errored: "warning",
+};
+export const RUN_STATUS_LABEL: Record<TestRunStatus, string> = {
+  queued: "Queued",
+  running: "Running",
+  passed: "Passed",
+  failed: "Failed",
+  errored: "Infra error",
+};
 
-export function healthTone(score: number): Tone {
-  const band = healthBand(score);
-  return band === "healthy" ? "success" : band === "at_risk" ? "warning" : "danger";
-}
+export const SEVERITY_TONE: Record<Severity, Tone> = { critical: "danger", high: "danger", medium: "warning", low: "neutral" };
 
-export const TERMINAL_STATES: TaskState[] = ["merged", "closed", "failed", "rejected"];
-export const DONE_STATES: TaskState[] = ["client_approved", "merged", "closed"];
-export const ACTIVE_STATES: TaskState[] = [
-  "created",
-  "planned",
-  "plan_approved",
-  "running",
-  "verifying",
-  "retrying",
-  "escalated",
-  "awaiting_review",
-  "signed_off",
-  "pr_open",
-];
-
-export function isOpenTask(state: TaskState): boolean {
-  return ACTIVE_STATES.includes(state);
-}
+export const FAILURE_CLASS_LABEL: Record<FailureClass, string> = {
+  product_defect: "Product defect",
+  test_defect: "Test defect",
+  environment: "Environment",
+  flaky: "Flaky",
+  infrastructure: "Infrastructure",
+};
+export const FAILURE_CLASS_TONE: Record<FailureClass, Tone> = {
+  product_defect: "danger",
+  test_defect: "warning",
+  environment: "info",
+  flaky: "warning",
+  infrastructure: "neutral",
+};
+export const FAILURE_CLASS_HELP: Record<FailureClass, string> = {
+  product_defect: "The application behaved incorrectly. This is a real bug.",
+  test_defect: "The test itself is wrong or out of date.",
+  environment: "The preview environment wasn't ready or misconfigured.",
+  flaky: "Failed then passed on retry. Not counted as a defect.",
+  infrastructure: "ForgePilot worker problem. Never blamed on your change; reruns are free.",
+};

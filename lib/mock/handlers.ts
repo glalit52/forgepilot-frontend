@@ -1,79 +1,45 @@
 /**
  * Mock API route table. app/api/mock/[...path]/route.ts dispatches here.
- * Each route documents method, path, auth and request/response schema so the
- * backend contract (docs/api-contract.md) can be read straight off this file.
+ * Each route declares method, path, permission and request/response schema;
+ * docs/api-contract.md is generated from this table.
+ *
+ * Tenant isolation: every handler reads `ctx.orgId` (the active workspace)
+ * and only touches that workspace's records.
  */
 import "server-only";
 import { z } from "zod";
-import {
-  ActivityItemSchema,
-  ApplicationDetailSchema,
-  ApplicationSummarySchema,
-  ApprovalInputSchema,
-  ApprovalQueueItemSchema,
-  ClientDetailSchema,
-  ClientSummarySchema,
-  ConnectIntegrationInputSchema,
-  DiffFileSchema,
-  EvidencePackSchema,
-  GitRepoCandidateSchema,
-  IntegrationViewSchema,
-  InviteUserInputSchema,
-  LiveLogSchema,
-  NewTaskInputSchema,
-  NotificationListSchema,
-  OkSchema,
-  OnboardingInputSchema,
-  OnboardingResultSchema,
-  OnboardingStatusSchema,
-  OpsDashboardSchema,
-  PortalOverviewSchema,
-  RepositoryDetailSchema,
-  RepositorySummarySchema,
-  SavingsReportSchema,
-  SearchResultSchema,
-  SessionSchema,
-  SlaReportSchema,
-  SwitchSessionInputSchema,
-  TaskActionInputSchema,
-  TaskDetailSchema,
-  TaskListItemSchema,
-  UserSchema,
-  type MockDb,
-  type Task,
-  type User,
-} from "@/lib/schemas";
-import { areaForRole, canApprove, canManageTeam, isManager } from "@/lib/domain/roles";
-import { checkAction, MAX_ATTEMPTS } from "@/lib/domain/workflow";
+import * as S from "@/lib/schemas";
+import type { MockDb, Organization, Role, Task, User } from "@/lib/schemas";
+import { can, meetsRole, type Permission } from "@/lib/domain/permissions";
+import { checkTaskAction, BOARD_COLUMNS } from "@/lib/domain/workflow";
 import { INTEGRATION_PROVIDERS, providerById } from "@/lib/domain/integrations";
-import { hoursBetween } from "@/lib/domain/sla";
-import { repoName, TASK_TYPE_LABEL } from "@/lib/domain/labels";
-import { getDb, newId, resetDb } from "./db";
-import { appendEvidence, toIso } from "./evidence";
-import { generateDiff, generateLog, flakyTestsFor, gitCandidates } from "./generators";
-import { latestRun, RUN_MS, SCAN_MS } from "./simulation";
+import { METER_INFO, PLANS, planById } from "@/lib/domain/plans";
+import { getDb, newId, resetDb, toIso, fakeSha } from "./db";
+import { applyMerge, audit, endSession, INDEX_MS, notify, resumeSession, startScan, startSession, startTestRun } from "./loop";
+import { generateDiff, generateLog, githubCandidates, workerLog } from "./generators";
 import {
-  activityFor,
-  appHealth,
-  applicationSummary,
-  clientSummary,
-  evidenceFor,
-  evidencePack,
-  opsDashboard,
-  portalOverview,
+  activity,
+  budgetRemaining,
+  bugListItem,
+  DAY,
+  findingListItem,
+  inOrg,
+  lifecycle,
+  monthStart,
+  monthToDateSpend,
+  prListItem,
+  projectSummary,
+  releasePolicy,
   repositorySummary,
-  savingsReportFor,
-  signOffFor,
-  slaReportFor,
+  runListItem,
+  sessionListItem,
+  spendBetween,
   taskListItem,
+  verifiedTasks,
 } from "./views";
 
 export class HttpError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-    public details?: unknown,
-  ) {
+  constructor(public status: number, message: string, public details?: unknown) {
     super(message);
   }
 }
@@ -81,6 +47,8 @@ export class HttpError extends Error {
 export interface Ctx {
   db: MockDb;
   user: User | null;
+  orgId: string;
+  role: Role | undefined;
   params: Record<string, string>;
   query: URLSearchParams;
   body: unknown;
@@ -88,7 +56,7 @@ export interface Ctx {
   setCookies?: { name: string; value: string }[];
 }
 
-type Auth = "public" | "any" | "portal" | "console" | "manager";
+type Auth = "public" | "member" | Permission;
 
 export interface RouteDef {
   method: "GET" | "POST";
@@ -101,1292 +69,1378 @@ export interface RouteDef {
 }
 
 // ---------------------------------------------------------------- helpers
-function requireUser(ctx: Ctx): User {
+function me(ctx: Ctx): User {
   if (!ctx.user) throw new HttpError(401, "Not signed in");
   return ctx.user;
 }
+const person = (ctx: Ctx) => ({ type: "person" as const, id: me(ctx).id });
 
-/** Org ids the current user may see. Portal users: their org. Console: all. */
-function visibleOrgIds(ctx: Ctx): string[] {
-  const u = requireUser(ctx);
-  if (areaForRole(u.role) === "portal") return u.orgId ? [u.orgId] : [];
-  return ctx.db.organizations.map((o) => o.id);
+function org(ctx: Ctx): Organization {
+  return ctx.db.organizations.find((o) => o.id === ctx.orgId)!;
 }
 
-function portalOrgId(ctx: Ctx): string {
-  const u = requireUser(ctx);
-  if (u.orgId) return u.orgId;
-  const q = ctx.query.get("orgId");
-  if (q) return q;
-  throw new HttpError(400, "orgId is required for ForgePilot users");
-}
-
-function findTask(ctx: Ctx, id: string): Task {
-  const t = ctx.db.tasks.find((x) => x.id === id);
-  if (!t || !visibleOrgIds(ctx).includes(t.orgId)) throw new HttpError(404, "Task not found");
-  return t;
-}
-
-function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
-  const r = schema.safeParse(body);
+function body<T>(schema: z.ZodType<T>, b: unknown): T {
+  const r = schema.safeParse(b ?? {});
   if (!r.success) throw new HttpError(422, "Validation failed", z.flattenError(r.error));
   return r.data;
 }
 
-function person(u: User) {
-  return { type: "person" as const, id: u.id };
+/** Look up a record by id inside the active workspace only (404 across tenants). */
+function own<T extends { id: string; orgId: string }>(ctx: Ctx, xs: T[], id: string, what: string): T {
+  const x = xs.find((v) => v.id === id && v.orgId === ctx.orgId);
+  if (!x) throw new HttpError(404, `${what} not found`);
+  return x;
 }
 
-function taskDetail(ctx: Ctx, task: Task) {
-  const { db, now } = ctx;
-  const runs = db.agentRuns
-    .filter((r) => r.taskId === task.id)
-    .sort((a, b) => a.attempt - b.attempt);
-  const runIds = new Set(runs.map((r) => r.id));
-  const { items, chainValid } = evidenceFor(db, task.id);
+function require(ctx: Ctx, p: Permission) {
+  if (!can(ctx.role, p)) throw new HttpError(403, `Your role (${ctx.role}) can't do this`);
+}
+
+function policy(ctx: Ctx) {
+  return ctx.db.policies.find((p) => p.orgId === ctx.orgId)!;
+}
+
+function sessionInfo(ctx: Ctx) {
+  const { db } = ctx;
+  const user = me(ctx);
+  const workspaces = db.memberships
+    .filter((m) => m.userId === user.id)
+    .map((m) => ({ organization: db.organizations.find((o) => o.id === m.orgId)!, role: m.role }));
   return {
-    task: taskListItem(db, task, now),
-    application: db.applications.find((a) => a.id === task.applicationId)!,
-    repository: db.repositories.find((r) => r.id === task.repositoryId)!,
-    organization: db.organizations.find((o) => o.id === task.orgId)!,
-    contract: db.contracts.find((c) => c.orgId === task.orgId) ?? null,
-    runs,
-    verifications: db.verificationRuns.filter((v) => runIds.has(v.agentRunId)),
-    approvals: db.approvals
-      .filter((a) => a.taskId === task.id)
-      .map((a) => ({ ...a, approver: db.users.find((u) => u.id === a.approverUserId) ?? null })),
-    evidence: items,
-    chainValid,
-    signOff: signOffFor(db, task.id),
+    user,
+    workspace: org(ctx),
+    role: ctx.role!,
+    workspaces,
+    personas: db.users.map((u) => ({
+      ...u,
+      workspaces: db.memberships.filter((m) => m.userId === u.id).map((m) => ({ orgId: m.orgId, name: db.organizations.find((o) => o.id === m.orgId)!.name, role: m.role })),
+    })).filter((u) => u.workspaces.length),
+    counts: {
+      pendingApprovals: inOrg(db.approvals, ctx.orgId).filter((a) => a.status === "pending").length,
+      reviewReady: inOrg(db.tasks, ctx.orgId).filter((t) => t.status === "review_ready").length,
+      unreadNotifications: inOrg(db.notifications, ctx.orgId).filter((n) => !n.read).length,
+    },
   };
 }
 
-function filterTasks(ctx: Ctx, tasks: Task[]) {
-  const q = ctx.query;
-  const u = requireUser(ctx);
-  return tasks.filter((t) => {
-    if (q.get("orgId") && t.orgId !== q.get("orgId")) return false;
-    if (q.get("applicationId") && t.applicationId !== q.get("applicationId")) return false;
-    if (q.get("repositoryId") && t.repositoryId !== q.get("repositoryId")) return false;
-    if (q.get("type") && t.type !== q.get("type")) return false;
-    if (q.get("state") && t.state !== q.get("state")) return false;
-    if (q.get("assigneeUserId") && t.assigneeUserId !== q.get("assigneeUserId")) return false;
-    if (q.get("agent") && t.agent !== q.get("agent")) return false;
-    if (q.get("mine") === "true" && t.assigneeUserId !== u.id) return false;
-    if (q.get("from") && t.createdAt < q.get("from")!) return false;
-    if (q.get("to") && t.createdAt.slice(0, 10) > q.get("to")!) return false;
-    return true;
-  });
+function signIn(ctx: Ctx, userId: string, orgId?: string) {
+  const user = ctx.db.users.find((u) => u.id === userId);
+  if (!user) throw new HttpError(404, "Unknown user");
+  const membership = ctx.db.memberships.find((m) => m.userId === userId && (!orgId || m.orgId === orgId));
+  if (!membership) throw new HttpError(403, "Not a member of that workspace");
+  ctx.user = user;
+  ctx.orgId = membership.orgId;
+  ctx.role = membership.role;
+  ctx.setCookies = [
+    { name: "fp_session", value: user.id },
+    { name: "fp_ws", value: membership.orgId },
+  ];
+  return sessionInfo(ctx);
 }
 
-function startRun(ctx: Ctx, task: Task, opts: { notes?: string; simulateFailure?: boolean }) {
+function taskDetail(ctx: Ctx, t: Task) {
+  const { db } = ctx;
+  const pr = t.pullRequestId ? db.pullRequests.find((p) => p.id === t.pullRequestId) : undefined;
+  const p = policy(ctx);
+  const rules = p.approvalRules;
+  return {
+    task: taskListItem(db, t),
+    sessions: db.sessions
+      .filter((s) => s.taskId === t.id)
+      .sort((a, b) => a.attempt - b.attempt)
+      .map((s) => ({ ...s, workspace: db.workspaces.find((w) => w.sessionId === s.id) ?? null })),
+    approvals: db.approvals.filter((a) => a.context.taskId === t.id),
+    pullRequest: pr ? prListItem(db, pr) : null,
+    runs: pr ? db.testRuns.filter((r) => r.pullRequestId === pr.id).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).map((r) => runListItem(db, r)) : [],
+    bug: t.bugId ? db.bugs.find((b) => b.id === t.bugId) ?? null : null,
+    finding: t.findingId ? db.findings.find((f) => f.id === t.findingId) ?? null : null,
+    parent: t.parentTaskId ? db.tasks.find((x) => x.id === t.parentTaskId) ?? null : null,
+    children: db.tasks.filter((x) => x.parentTaskId === t.id),
+    lifecycle: lifecycle(db, t),
+    activity: activity(db, inOrg(db.auditLogs, ctx.orgId).filter((l) => {
+      const sessIds = db.sessions.filter((s) => s.taskId === t.id).map((s) => `session:${s.id}`);
+      return l.resource === `task:${t.id}` || sessIds.includes(l.resource) || (pr && l.resource === `pr:${pr.id}`) || (pr && db.testRuns.some((r) => r.pullRequestId === pr.id && l.resource === `run:${r.id}`));
+    })).reverse(),
+    policyPreview: {
+      allowed: ["Read the selected repository", "Run tests in the isolated workspace", `Network: ${p.networkAllowlist.join(", ")}`, p.requirePrApproval ? "Open a pull request (human review required)" : "Open a pull request"],
+      requiresApproval: [...rules.filter((r) => r.mode === "require_approval").map((r) => r.action.replace(/_/g, " ")), ...p.protectedPaths.map((x) => `write ${x}`)],
+      prohibited: rules.filter((r) => r.mode === "prohibited").map((r) => r.action.replace(/_/g, " ")),
+      budgetRemainingUsd: budgetRemaining(db, ctx.orgId, ctx.now),
+    },
+  };
+}
+
+function prDetail(ctx: Ctx, id: string) {
+  const { db } = ctx;
+  const pr = own(ctx, db.pullRequests, id, "Pull request");
+  const runs = db.testRuns.filter((r) => r.pullRequestId === pr.id).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const latest = runs[0];
+  const policyChecks = releasePolicy(db, pr);
+  const blockers = policyChecks.filter((c) => c.required && c.status !== "passed").map((c) => `${c.name}: ${c.status}`);
+  return {
+    pullRequest: prListItem(db, pr),
+    repository: db.repositories.find((r) => r.id === pr.repositoryId)!,
+    task: pr.taskId ? db.tasks.find((t) => t.id === pr.taskId) ?? null : null,
+    session: pr.author.sessionId ? db.sessions.find((s) => s.id === pr.author.sessionId) ?? null : null,
+    runs: runs.map((r) => runListItem(db, r)),
+    latestResults: latest
+      ? db.testResults.filter((r) => r.runId === latest.id).map((r) => ({ ...r, suiteName: db.testSuites.find((s) => s.id === r.suiteId)?.name ?? "" }))
+      : [],
+    bugs: db.bugs.filter((b) => b.pullRequestId === pr.id),
+    releasePolicy: policyChecks,
+    mergeable: pr.status === "open" && blockers.length === 0,
+    mergeBlockers: blockers,
+  };
+}
+
+function createTask(ctx: Ctx, input: S.NewTaskInput) {
+  const { db } = ctx;
+  const parsed = body(S.NewTaskInputSchema, input);
+  const repo = own(ctx, db.repositories, parsed.repositoryId, "Repository");
+  const agent = own(ctx, db.agents, parsed.agentId, "Agent");
+  if (!policy(ctx).allowedProviders.includes(agent.provider)) throw new HttpError(409, `${agent.name} is not allowed by workspace policy`);
+  const n = db.tasks.length + 1;
+  const id = `task_${String(n).padStart(3, "0")}${Date.now().toString(36).slice(-3)}`;
+  const vague = parsed.acceptanceCriteria.length < 2 || parsed.description.length < 40;
+  const task: Task = {
+    id,
+    orgId: ctx.orgId,
+    projectId: repo.projectId,
+    repositoryId: repo.id,
+    title: parsed.title,
+    description: parsed.description,
+    acceptanceCriteria: parsed.acceptanceCriteria,
+    constraints: parsed.constraints,
+    priority: parsed.priority,
+    status: parsed.launch ? "queued" : "draft",
+    source: parsed.source,
+    sourceRef: parsed.sourceRef,
+    createdBy: me(ctx).id,
+    createdAt: toIso(ctx.now),
+    agentId: agent.id,
+    baseSha: repo.indexedSha,
+    targetBranch: parsed.targetBranch,
+    branch: `fp/${id}-${parsed.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 32).replace(/-$/, "")}`,
+    budgetUsd: parsed.budgetUsd,
+    timeoutMin: parsed.timeoutMin,
+    parentTaskId: parsed.parentTaskId,
+    bugId: parsed.bugId,
+    findingId: parsed.findingId,
+    pullRequestId: null,
+    assigneeId: me(ctx).id,
+    clarityWarning: vague ? "Vague tasks produce vague PRs: add more acceptance criteria or detail." : null,
+  };
+  db.tasks.push(task);
+  audit(db, ctx.orgId, person(ctx), "task.created", `task:${id}`, task.title, ctx.now);
+  if (parsed.launch) {
+    if (budgetRemaining(db, ctx.orgId, ctx.now) <= 0 && org(ctx).budget.hardCap) throw new HttpError(402, "Monthly budget exhausted (hard cap). Raise the budget in Billing.");
+    startSession(db, task, person(ctx), { now: ctx.now });
+  }
+  return task;
+}
+
+function billing(ctx: Ctx) {
   const { db, now } = ctx;
-  const attempts = db.agentRuns.filter((r) => r.taskId === task.id).length;
-  const model =
-    task.agent === "claude_code" ? "claude-sonnet" : task.agent === "codex" ? "gpt-codex" : "devin";
-  const run = {
-    id: `run_${task.id}_${attempts + 1}`,
-    taskId: task.id,
-    attempt: attempts + 1,
-    agent: task.agent,
-    model,
-    tokens: 0,
-    costUsd: 0,
-    durationSec: null,
-    outcome: "running" as const,
-    startedAt: toIso(now),
-    notes: opts.notes,
-    simulatedEndsAt: now + RUN_MS,
-    simulateFailure: opts.simulateFailure ?? false,
+  const o = org(ctx);
+  const plan = planById(o.plan);
+  const start = monthStart(now);
+  const d = new Date(now);
+  const end = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  const elapsed = Math.max(1, (now - start) / DAY);
+  const daysInMonth = (end - start) / DAY;
+  const recs = inOrg(db.usageRecords, o.id).filter((u) => Date.parse(u.date) >= start);
+  const sum = (m: S.Meter) => recs.filter((u) => u.meter === m).reduce((s, u) => s + u.units, 0);
+  const usage = (Object.keys(METER_INFO) as S.Meter[]).map((meter) => {
+    const info = METER_INFO[meter];
+    const used = Math.round(sum(meter) * 10) / 10;
+    const included = info.quotaKey ? (plan.limits[info.quotaKey] as number | null) : null;
+    const projected = Math.round((used / elapsed) * daysInMonth);
+    const overageUnits = included === null ? 0 : Math.max(0, used - included);
+    return { meter, label: info.label, unit: info.unit, used, included, projected, overageUnits: Math.round(overageUnits), overageUsd: Math.round(overageUnits * info.overageUsd * 100) / 100, unitPriceUsd: info.overageUsd };
+  });
+  const usageCost = monthToDateSpend(db, o.id, now);
+  const subscription = (o.billingCycle === "annual" ? plan.priceAnnualMonthlyUsd : plan.priceMonthlyUsd) ?? 0;
+  const byDay = new Map<string, number>();
+  inOrg(db.usageRecords, o.id)
+    .filter((u) => Date.parse(u.date) >= now - 30 * DAY)
+    .forEach((u) => byDay.set(u.date, (byDay.get(u.date) ?? 0) + u.costUsd));
+  const byProject = new Map<string, number>();
+  const byProvider = new Map<string, number>();
+  recs.forEach((u) => {
+    byProject.set(u.projectId, (byProject.get(u.projectId) ?? 0) + u.costUsd);
+    byProvider.set(u.provider, (byProvider.get(u.provider) ?? 0) + u.costUsd);
+  });
+  const members = db.memberships.filter((m) => m.orgId === o.id).length;
+  return {
+    plan: o.plan,
+    billingCycle: o.billingCycle,
+    seatsUsed: members,
+    seatsIncluded: plan.limits.seats,
+    periodStart: toIso(start),
+    periodEnd: toIso(end),
+    subscriptionUsd: subscription,
+    usage,
+    spend: {
+      usageCostUsd: usageCost,
+      projectedUsd: Math.round((usageCost / elapsed) * daysInMonth * 100) / 100,
+      budgetUsd: o.budget.monthlyLimitUsd,
+      hardCap: o.budget.hardCap,
+      alertAtPct: o.budget.alertAtPct,
+      pctOfBudget: o.budget.monthlyLimitUsd ? Math.round((usageCost / o.budget.monthlyLimitUsd) * 1000) / 10 : 0,
+    },
+    dailyCost: [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, costUsd]) => ({ date, costUsd: Math.round(costUsd * 100) / 100 })),
+    costByProject: [...byProject.entries()].map(([projectId, costUsd]) => ({ projectId, name: db.projects.find((p) => p.id === projectId)?.name ?? projectId, costUsd: Math.round(costUsd * 100) / 100 })).sort((a, b) => b.costUsd - a.costUsd),
+    costByProvider: [...byProvider.entries()].filter(([, c]) => c > 0).map(([provider, costUsd]) => ({ provider, costUsd: Math.round(costUsd * 100) / 100 })).sort((a, b) => b.costUsd - a.costUsd),
+    invoices: inOrg(db.invoices, o.id).sort((a, b) => b.period.localeCompare(a.period)),
+    paymentMethod: o.plan === "free" ? null : { brand: "Visa", last4: o.id === "ws_northwind" ? "8810" : "4242", expires: "08/28" },
+    limits: [
+      { key: "projects", label: "Projects", used: inOrg(db.projects, o.id).length, limit: plan.limits.projects },
+      { key: "repositories", label: "Repositories", used: inOrg(db.repositories, o.id).length, limit: plan.limits.repositories },
+      { key: "seats", label: "Seats", used: members, limit: plan.limits.seats },
+      { key: "concurrent", label: "Concurrent agent sessions", used: inOrg(db.sessions, o.id).filter((s) => s.status === "running" || s.status === "waiting").length, limit: plan.limits.concurrentSessions },
+    ],
   };
-  db.agentRuns.push(run);
-  task.state = "running";
-  appendEvidence(
-    db,
-    task.id,
-    "agent_run_started",
-    { type: "agent", id: `${task.agent}:${model}` },
-    { runId: run.id, attempt: run.attempt, ...(opts.notes ? { notes: opts.notes } : {}) },
-    now,
-  );
-  return run;
 }
+
+const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : 0);
 
 // ---------------------------------------------------------------- routes
 export const routes: RouteDef[] = [
-  // ---- session
+  // ===== session & auth
   {
-    method: "GET",
-    path: "/session",
-    auth: "any",
-    summary:
-      "Current mock session (user, organization) and the personas available in the role switcher.",
-    response: SessionSchema,
+    method: "GET", path: "/session/personas", auth: "public", summary: "Demo personas for the sign-in screen.",
+    response: z.array(S.UserSchema.extend({ workspaces: z.array(z.object({ orgId: z.string(), name: z.string(), role: S.RoleSchema })) })),
+    handler: ({ db }) => db.users.map((u) => ({ ...u, workspaces: db.memberships.filter((m) => m.userId === u.id).map((m) => ({ orgId: m.orgId, name: db.organizations.find((o) => o.id === m.orgId)!.name, role: m.role })) })).filter((u) => u.workspaces.length),
+  },
+  {
+    method: "GET", path: "/session", auth: "member", summary: "Current user, active workspace, role, other workspaces and badge counts.",
+    response: S.SessionInfoSchema, handler: sessionInfo,
+  },
+  {
+    method: "POST", path: "/session", auth: "public", summary: "Sign in as a demo persona (sets fp_session and fp_ws cookies).",
+    request: S.SignInInputSchema, response: S.SessionInfoSchema,
     handler: (ctx) => {
-      const user = requireUser(ctx);
-      return {
-        user,
-        organization: ctx.db.organizations.find((o) => o.id === user.orgId) ?? null,
-        personas: ctx.db.users.filter((u) => u.status !== "invited"),
-      };
+      const { userId, orgId } = body(S.SignInInputSchema, ctx.body);
+      return signIn(ctx, userId, orgId);
     },
   },
   {
-    method: "GET",
-    path: "/session/personas",
-    auth: "public",
-    summary: "Personas for the mock sign-in screen.",
-    response: z.array(UserSchema),
-    handler: (ctx) => ctx.db.users.filter((u) => u.status !== "invited"),
+    method: "POST", path: "/session/workspace", auth: "member", summary: "Switch the active workspace.",
+    request: S.SwitchWorkspaceInputSchema, response: S.SessionInfoSchema,
+    handler: (ctx) => signIn(ctx, me(ctx).id, body(S.SwitchWorkspaceInputSchema, ctx.body).orgId),
   },
   {
-    method: "POST",
-    path: "/session",
-    auth: "public",
-    summary: "Switch mock session to another persona (sets the fp_session cookie).",
-    request: SwitchSessionInputSchema,
-    response: SessionSchema,
+    method: "POST", path: "/signup", auth: "public", summary: "Create an account (mock GitHub OAuth or email). The user then creates a workspace in onboarding.",
+    request: S.SignUpInputSchema, response: S.UserSchema,
     handler: (ctx) => {
-      const { userId } = parseBody(SwitchSessionInputSchema, ctx.body);
-      const user = ctx.db.users.find((u) => u.id === userId);
-      if (!user) throw new HttpError(404, "Unknown persona");
-      ctx.setCookies = [
-        { name: "fp_session", value: user.id },
-        { name: "fp_role", value: user.role },
-      ];
-      return {
-        user,
-        organization: ctx.db.organizations.find((o) => o.id === user.orgId) ?? null,
-        personas: ctx.db.users.filter((u) => u.status !== "invited"),
+      const input = body(S.SignUpInputSchema, ctx.body);
+      if (ctx.db.users.some((u) => u.email.toLowerCase() === input.email.toLowerCase())) throw new HttpError(409, "An account with that email already exists. Sign in instead.");
+      const user: User = { id: newId("u"), name: input.name, email: input.email, title: "", githubLogin: input.method === "github" ? input.email.split("@")[0] : undefined };
+      ctx.db.users.push(user);
+      ctx.setCookies = [{ name: "fp_session", value: user.id }, { name: "fp_ws", value: "" }];
+      return user;
+    },
+  },
+  {
+    method: "POST", path: "/orgs", auth: "public", summary: "Create a workspace for the signed-in user (owner, Free plan with a 14-day Team trial).",
+    request: S.CreateWorkspaceInputSchema, response: S.OrganizationSchema,
+    handler: (ctx) => {
+      const user = me(ctx);
+      const input = body(S.CreateWorkspaceInputSchema, ctx.body);
+      const id = newId("ws");
+      const slug = input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || id;
+      const o: Organization = {
+        id, slug, name: input.name, kind: input.kind, plan: "free", billingCycle: "monthly", createdAt: toIso(ctx.now), useCase: input.useCase,
+        seatsPurchased: 1, budget: { monthlyLimitUsd: 25, hardCap: true, alertAtPct: [80, 100] }, trialEndsAt: toIso(ctx.now + 14 * DAY),
       };
+      ctx.db.organizations.push(o);
+      ctx.db.memberships.push({ orgId: id, userId: user.id, role: "owner", joinedAt: toIso(ctx.now) });
+      const base = ctx.db.policies.find((p) => p.orgId === "ws_maya")!;
+      ctx.db.policies.push({ ...structuredClone(base), orgId: id, allowedProviders: ["claude_code"] });
+      ctx.db.agents.push({ id: newId("agent"), orgId: id, provider: "claude_code", name: "Claude Code", model: "claude-sonnet", status: "active", maxConcurrent: 1, defaultTimeoutMin: 30, defaultBudgetUsd: 3 });
+      ctx.db.integrations.push({ id: newId("int"), orgId: id, providerId: "claude_code", status: "connected", account: "ForgePilot-managed key (trial)", connectedAt: toIso(ctx.now), scopes: ["agent:run"] });
+      ctx.orgId = id;
+      ctx.role = "owner";
+      ctx.setCookies = [{ name: "fp_session", value: user.id }, { name: "fp_ws", value: id }];
+      audit(ctx.db, id, { type: "person", id: user.id }, "workspace.created", `workspace:${id}`, input.name, ctx.now);
+      return o;
     },
   },
 
-  // ---- portal overview & activity
+  // ===== onboarding: GitHub App + repository intelligence
   {
-    method: "GET",
-    path: "/overview",
-    auth: "portal",
-    summary: "Portal overview: KPIs, 12-week health trend, needs-attention list, recent activity.",
-    response: PortalOverviewSchema,
-    handler: (ctx) => portalOverview(ctx.db, portalOrgId(ctx), ctx.now),
+    method: "GET", path: "/github/repositories", auth: "member", summary: "Repositories visible to the GitHub App installation (mock). ?account=",
+    response: z.array(S.GithubRepoCandidateSchema),
+    handler: (ctx) => githubCandidates(ctx.db, ctx.orgId, ctx.query.get("account") ?? org(ctx).slug, ctx.now),
   },
   {
-    method: "GET",
-    path: "/activity",
-    auth: "any",
-    summary: "Recent evidence events across visible organizations. ?limit=",
-    response: z.array(ActivityItemSchema),
-    handler: (ctx) => activityFor(ctx.db, visibleOrgIds(ctx), Number(ctx.query.get("limit") ?? 20)),
-  },
-
-  // ---- applications
-  {
-    method: "GET",
-    path: "/applications",
-    auth: "any",
-    summary: "Applications visible to the user. Console may filter ?orgId=",
-    response: z.array(ApplicationSummarySchema),
+    method: "POST", path: "/github/install", auth: "repo.connect", summary: "Record the GitHub App installation for the workspace (mock).",
+    request: S.ConnectIntegrationInputSchema, response: S.IntegrationSchema,
     handler: (ctx) => {
-      const orgs = visibleOrgIds(ctx);
-      const orgId = ctx.query.get("orgId");
-      return ctx.db.applications
-        .filter((a) => orgs.includes(a.orgId) && (!orgId || a.orgId === orgId))
-        .map((a) => applicationSummary(ctx.db, a.id, ctx.now));
+      const { account } = body(S.ConnectIntegrationInputSchema, ctx.body);
+      let i = ctx.db.integrations.find((x) => x.orgId === ctx.orgId && x.providerId === "github");
+      if (!i) {
+        i = { id: newId("int"), orgId: ctx.orgId, providerId: "github", status: "connected", account, connectedAt: toIso(ctx.now), scopes: providerById("github")!.scopes };
+        ctx.db.integrations.push(i);
+      } else Object.assign(i, { status: "connected", account, connectedAt: toIso(ctx.now), error: undefined });
+      audit(ctx.db, ctx.orgId, person(ctx), "integration.connected", "integration:github", account, ctx.now);
+      return i;
     },
   },
   {
-    method: "GET",
-    path: "/applications/:id",
-    auth: "any",
-    summary: "Application detail with health breakdown, history, repositories, findings and tasks.",
-    response: ApplicationDetailSchema,
+    method: "POST", path: "/repositories/connect", auth: "repo.connect", summary: "Connect selected repositories to a project and start indexing (repository intelligence).",
+    request: S.ConnectReposInputSchema, response: S.ConnectReposResultSchema,
     handler: (ctx) => {
-      const app = ctx.db.applications.find((a) => a.id === ctx.params.id);
-      if (!app || !visibleOrgIds(ctx).includes(app.orgId))
-        throw new HttpError(404, "Application not found");
-      const repos = ctx.db.repositories.filter((r) => r.applicationId === app.id);
-      const sev = { critical: 0, high: 1, medium: 2, low: 3 } as const;
-      return {
-        application: applicationSummary(ctx.db, app.id, ctx.now),
-        organization: ctx.db.organizations.find((o) => o.id === app.orgId)!,
-        owners: ctx.db.users.filter((u) => app.ownerUserIds.includes(u.id)),
-        health: appHealth(ctx.db, app.id),
-        history: ctx.db.healthHistory.filter((h) => h.applicationId === app.id),
-        repositories: repos,
-        findings: ctx.db.findings
-          .filter((f) => repos.some((r) => r.id === f.repositoryId))
-          .map((f) => ({
-            ...f,
-            repositoryName: repoName(repos.find((r) => r.id === f.repositoryId)!.url),
-          }))
-          .sort((a, b) => sev[a.severity] - sev[b.severity]),
-        tasks: ctx.db.tasks
-          .filter((t) => t.applicationId === app.id)
-          .map((t) => taskListItem(ctx.db, t, ctx.now))
-          .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-      };
-    },
-  },
-
-  // ---- repositories
-  {
-    method: "GET",
-    path: "/repositories",
-    auth: "any",
-    summary: "Repositories visible to the user. ?orgId= ?applicationId=",
-    response: z.array(RepositorySummarySchema),
-    handler: (ctx) => {
-      const orgs = visibleOrgIds(ctx);
-      return ctx.db.repositories
-        .map((r) => repositorySummary(ctx.db, r.id))
-        .filter((r) => orgs.includes(r.organizationId))
-        .filter((r) => !ctx.query.get("orgId") || r.organizationId === ctx.query.get("orgId"))
-        .filter(
-          (r) =>
-            !ctx.query.get("applicationId") || r.applicationId === ctx.query.get("applicationId"),
-        );
-    },
-  },
-  {
-    method: "GET",
-    path: "/repositories/:id",
-    auth: "any",
-    summary: "Repository detail: health, findings, scans, flaky tests, tasks.",
-    response: RepositoryDetailSchema,
-    handler: (ctx) => {
-      const repo = ctx.db.repositories.find((r) => r.id === ctx.params.id);
-      if (!repo) throw new HttpError(404, "Repository not found");
-      const summary = repositorySummary(ctx.db, repo.id);
-      if (!visibleOrgIds(ctx).includes(summary.organizationId))
-        throw new HttpError(404, "Repository not found");
-      return {
-        repository: summary,
-        findings: ctx.db.findings.filter((f) => f.repositoryId === repo.id),
-        scans: ctx.db.scans
-          .filter((s) => s.repositoryId === repo.id)
-          .sort((a, b) => b.startedAt.localeCompare(a.startedAt)),
-        tasks: ctx.db.tasks
-          .filter((t) => t.repositoryId === repo.id)
-          .map((t) => taskListItem(ctx.db, t, ctx.now)),
-        flakyTests: flakyTestsFor(repo),
-      };
-    },
-  },
-  {
-    method: "POST",
-    path: "/repositories/:id/scans",
-    auth: "console",
-    summary: "Start a health scan (mock: completes after a few seconds with updated results).",
-    response: z.object({ scanId: z.string() }),
-    handler: (ctx) => {
-      const repo = ctx.db.repositories.find((r) => r.id === ctx.params.id);
-      if (!repo) throw new HttpError(404, "Repository not found");
-      const running = ctx.db.scans.find(
-        (s) => s.repositoryId === repo.id && s.status === "running",
-      );
-      if (running) return { scanId: running.id };
-      const scan = {
-        id: newId("scan"),
-        repositoryId: repo.id,
-        startedAt: toIso(ctx.now),
-        finishedAt: null,
-        status: "running" as const,
-        healthScore: null,
-        findingsCount: null,
-        trigger: "manual" as const,
-        simulatedEndsAt: ctx.now + SCAN_MS,
-      };
-      ctx.db.scans.push(scan);
-      return { scanId: scan.id };
-    },
-  },
-
-  // ---- tasks
-  {
-    method: "GET",
-    path: "/tasks",
-    auth: "any",
-    summary:
-      "Tasks visible to the user. Filters: orgId, applicationId, repositoryId, type, state, assigneeUserId, agent, from, to, mine.",
-    response: z.array(TaskListItemSchema),
-    handler: (ctx) => {
-      const orgs = visibleOrgIds(ctx);
-      return filterTasks(
-        ctx,
-        ctx.db.tasks.filter((t) => orgs.includes(t.orgId)),
-      )
-        .map((t) => taskListItem(ctx.db, t, ctx.now))
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    },
-  },
-  {
-    method: "POST",
-    path: "/tasks",
-    auth: "console",
-    summary: "Create a task (New task dialog).",
-    request: NewTaskInputSchema,
-    response: TaskListItemSchema,
-    handler: (ctx) => {
-      const user = requireUser(ctx);
-      const input = parseBody(NewTaskInputSchema, ctx.body);
-      const repo = ctx.db.repositories.find((r) => r.id === input.repositoryId);
-      const app = repo && ctx.db.applications.find((a) => a.id === repo.applicationId);
-      if (!repo || !app || app.orgId !== input.orgId)
-        throw new HttpError(422, "Repository does not belong to that client");
-      const n = ctx.db.tasks.length + 1;
-      const id = `task_${String(n).padStart(3, "0")}_${Date.now().toString(36).slice(-4)}`;
-      const hoursToSla = input.priority === "p0" ? 72 : input.priority === "p1" ? 120 : 240;
-      const task: Task = {
-        id,
-        repositoryId: repo.id,
-        applicationId: app.id,
-        orgId: app.orgId,
-        type: input.type,
-        title: input.title,
-        summary: input.description,
-        source: { kind: "manual", ref: `FP-${1000 + n}` },
-        state: "planned",
-        priority: input.priority,
-        slaDueAt: toIso(ctx.now + hoursToSla * 3_600_000),
-        assigneeUserId: input.assigneeUserId ?? (user.role === "fp_engineer" ? user.id : null),
-        agent: input.agent,
-        createdAt: toIso(ctx.now),
-        aiAuthoredPct: 0,
-        plan: {
-          steps: [
-            "Analyse affected modules",
-            "Apply change",
-            "Update or add tests",
-            "Run verification",
-          ],
-          acceptanceCriteria: input.acceptanceCriteria,
-          approvedBy: null,
-        },
-        estimatedHours: {
-          cve_patch: 36,
-          dependency_upgrade: 180,
-          bug_fix: 56,
-          enhancement: 110,
-          test_coverage: 80,
-        }[input.type],
-      };
-      ctx.db.tasks.push(task);
-      appendEvidence(
-        ctx.db,
-        id,
-        "task_created",
-        person(user),
-        { source: task.source.ref, type: TASK_TYPE_LABEL[task.type] },
-        ctx.now,
-      );
-      return taskListItem(ctx.db, task, ctx.now);
-    },
-  },
-  {
-    method: "GET",
-    path: "/tasks/:id",
-    auth: "any",
-    summary: "Task detail: runs, verifications, PR, approvals, evidence (hash-chain checked).",
-    response: TaskDetailSchema,
-    handler: (ctx) => taskDetail(ctx, findTask(ctx, ctx.params.id)),
-  },
-  {
-    method: "GET",
-    path: "/tasks/:id/log",
-    auth: "console",
-    summary: "Live agent log for the latest run (mock stream: poll every ~1.5s).",
-    response: LiveLogSchema,
-    handler: (ctx) => {
-      const task = findTask(ctx, ctx.params.id);
-      const run = latestRun(ctx.db, task.id);
-      const repo = ctx.db.repositories.find((r) => r.id === task.repositoryId)!;
-      if (!run) return { runId: null, status: "idle", lines: [], progressPct: 0 };
-      const lines = generateLog(task, repo, run, ctx.now);
-      const start = Date.parse(run.startedAt);
-      const end = run.simulatedEndsAt ?? start + (run.durationSec ?? 0) * 1000;
-      const progressPct =
-        run.outcome === "running"
-          ? Math.min(99, Math.round(((ctx.now - start) / Math.max(1, end - start)) * 100))
-          : 100;
-      const status =
-        run.outcome === "running" ? "running" : task.state === "verifying" ? "verifying" : "done";
-      return { runId: run.id, status, lines, progressPct };
-    },
-  },
-  {
-    method: "GET",
-    path: "/tasks/:id/diff",
-    auth: "any",
-    summary: "Unified diff of the change (files with hunks).",
-    response: z.array(DiffFileSchema),
-    handler: (ctx) => {
-      const task = findTask(ctx, ctx.params.id);
-      if (!latestRun(ctx.db, task.id)) return [];
-      return generateDiff(
-        task,
-        ctx.db.repositories.find((r) => r.id === task.repositoryId)!,
-      );
-    },
-  },
-  {
-    method: "POST",
-    path: "/tasks/:id/actions",
-    auth: "console",
-    summary:
-      "Engineer actions: save_plan, approve_plan, launch, stop, retry, take_over, sign_off, open_pr, escalate, close. Each writes an EvidenceRecord.",
-    request: TaskActionInputSchema,
-    response: TaskDetailSchema,
-    handler: (ctx) => {
-      const user = requireUser(ctx);
-      const task = findTask(ctx, ctx.params.id);
-      const input = parseBody(TaskActionInputSchema, ctx.body);
-      const item = taskListItem(ctx.db, task, ctx.now);
-      const check = checkAction(input.action, {
-        state: task.state,
-        latestVerification: item.latestVerification,
-        reviewedDiff: input.reviewedDiff,
-      });
-      if (!check.allowed) throw new HttpError(409, check.reason ?? "Action not allowed");
       const { db, now } = ctx;
-      const me = person(user);
-      switch (input.action) {
-        case "save_plan": {
-          if (!input.plan) throw new HttpError(422, "plan is required");
-          task.plan = { ...input.plan, approvedBy: null };
-          if (task.state === "created" || task.state === "plan_approved") task.state = "planned";
-          appendEvidence(
-            db,
-            task.id,
-            "plan_updated",
-            me,
-            { steps: input.plan.steps.length, criteria: input.plan.acceptanceCriteria.length },
-            now,
-          );
-          break;
-        }
-        case "approve_plan":
-          task.plan.approvedBy = user.id;
-          task.state = "plan_approved";
-          appendEvidence(db, task.id, "plan_approved", me, {}, now);
-          break;
-        case "launch":
-          startRun(ctx, task, { simulateFailure: input.simulateFailure });
-          break;
-        case "stop": {
-          const run = latestRun(db, task.id);
-          if (run && run.outcome === "running") {
-            run.outcome = "stopped";
-            run.durationSec = Math.round((now - Date.parse(run.startedAt)) / 1000);
-            delete run.simulatedEndsAt;
-          }
-          task.state = "plan_approved";
-          appendEvidence(
-            db,
-            task.id,
-            "agent_run_stopped",
-            me,
-            { runId: run?.id, notes: input.notes ?? "" },
-            now,
-          );
-          break;
-        }
-        case "retry": {
-          const attempts = db.agentRuns.filter((r) => r.taskId === task.id).length;
-          if (attempts >= MAX_ATTEMPTS + 2)
-            throw new HttpError(409, "Too many attempts; take over manually.");
-          appendEvidence(db, task.id, "retry_requested", me, { notes: input.notes ?? "" }, now);
-          startRun(ctx, task, { notes: input.notes, simulateFailure: input.simulateFailure });
-          break;
-        }
-        case "take_over": {
-          task.manualTakeoverBy = user.id;
-          const run = latestRun(db, task.id);
-          if (run && run.outcome === "running") {
-            run.outcome = "stopped";
-            run.durationSec = Math.round((now - Date.parse(run.startedAt)) / 1000);
-            delete run.simulatedEndsAt;
-          }
-          appendEvidence(db, task.id, "manual_takeover", me, { notes: input.notes ?? "" }, now);
-          // Engineer works by hand; their change still goes through the verification gate.
-          const humanRun = {
-            id: `run_${task.id}_${db.agentRuns.filter((r) => r.taskId === task.id).length + 1}`,
-            taskId: task.id,
-            attempt: db.agentRuns.filter((r) => r.taskId === task.id).length + 1,
-            agent: task.agent,
-            model: `manual:${user.name}`,
-            tokens: 0,
-            costUsd: 0,
-            durationSec: null,
-            outcome: "running" as const,
-            startedAt: toIso(now),
-            notes: input.notes ?? "Manual change by engineer",
-            simulatedEndsAt: now + RUN_MS,
-          };
-          db.agentRuns.push(humanRun);
-          task.state = "running";
-          task.aiAuthoredPct = Math.min(task.aiAuthoredPct, 35);
-          break;
-        }
-        case "sign_off":
-          appendEvidence(
-            db,
-            task.id,
-            "engineer_signed_off",
-            me,
-            { reviewedDiff: true, verificationId: item.latestVerification?.id },
-            now,
-          );
-          task.state = "signed_off";
-          break;
-        case "open_pr": {
-          const repo = db.repositories.find((r) => r.id === task.repositoryId)!;
-          const number = 400 + db.pullRequests.length + 20;
-          const pr = {
-            id: `pr_${task.id}`,
-            taskId: task.id,
-            number,
-            url: `${repo.url}/pull/${number}`,
-            status: "open" as const,
-            aiAuthoredPct: task.aiAuthoredPct || 70,
-            openedAt: toIso(now),
-          };
-          db.pullRequests = db.pullRequests.filter((p) => p.taskId !== task.id);
-          db.pullRequests.push(pr);
-          if (!task.aiAuthoredPct) task.aiAuthoredPct = pr.aiAuthoredPct;
-          task.state = "pr_open";
-          appendEvidence(
-            db,
-            task.id,
-            "pr_opened",
-            { type: "system", id: "forgepilot" },
-            { prId: pr.id, number, openedBy: user.id },
-            now,
-          );
-          db.notifications.unshift({
-            id: newId("ntf"),
-            audience: "portal",
-            orgId: task.orgId,
-            title: `PR #${number} is waiting for your approval`,
-            body: task.title,
-            href: `/portal/work/${task.id}`,
-            at: toIso(now),
-            read: false,
-          });
-          break;
-        }
-        case "escalate":
-          task.state = "escalated";
-          task.escalationReason = input.notes || "Escalated by engineer";
-          appendEvidence(db, task.id, "escalated", me, { notes: input.notes ?? "" }, now);
-          break;
-        case "close":
-          task.state = "closed";
-          appendEvidence(db, task.id, "closed", me, {}, now);
-          break;
-      }
-      return taskDetail(ctx, task);
-    },
-  },
-  {
-    method: "POST",
-    path: "/tasks/:id/approval",
-    auth: "portal",
-    summary:
-      "Client approves or requests changes on an open PR. Approvers/admins only. Appends an EvidenceRecord.",
-    request: ApprovalInputSchema,
-    response: TaskDetailSchema,
-    handler: (ctx) => {
-      const user = requireUser(ctx);
-      if (!canApprove(user.role))
-        throw new HttpError(403, "Your role can view but not approve changes");
-      const task = findTask(ctx, ctx.params.id);
-      if (task.state !== "pr_open")
-        throw new HttpError(409, "This change is not waiting for approval");
-      const input = parseBody(ApprovalInputSchema, ctx.body);
-      ctx.db.approvals.push({
-        id: newId("apr"),
-        taskId: task.id,
-        approverUserId: user.id,
-        decision: input.decision,
-        at: toIso(ctx.now),
-        comment: input.comment ?? "",
-      });
-      if (input.decision === "approved") {
-        task.state = "client_approved";
-        appendEvidence(
-          ctx.db,
-          task.id,
-          "client_approved",
-          person(user),
-          { comment: input.comment ?? "" },
-          ctx.now,
-        );
-      } else {
-        task.state = "rejected";
-        appendEvidence(
-          ctx.db,
-          task.id,
-          "client_requested_changes",
-          person(user),
-          { comment: input.comment },
-          ctx.now,
-        );
-        ctx.db.notifications.unshift({
-          id: newId("ntf"),
-          audience: "console",
-          orgId: null,
-          title: `Changes requested: ${task.title}`,
-          body: input.comment ?? "",
-          href: `/console/tasks/${task.id}`,
-          at: toIso(ctx.now),
-          read: false,
-        });
-      }
-      return taskDetail(ctx, task);
-    },
-  },
-
-  // ---- approvals
-  {
-    method: "GET",
-    path: "/approvals",
-    auth: "portal",
-    summary: "PRs waiting for client approval, oldest first, with risk and sign-off.",
-    response: z.array(ApprovalQueueItemSchema),
-    handler: (ctx) => {
-      const orgId = portalOrgId(ctx);
-      return ctx.db.tasks
-        .filter((t) => t.orgId === orgId && t.state === "pr_open")
-        .map((t) => {
-          const item = taskListItem(ctx.db, t, ctx.now);
-          const opened = item.pullRequest?.openedAt ?? t.createdAt;
-          return {
-            ...item,
-            waitingHours: Math.max(0, Math.round(hoursBetween(opened, ctx.now))),
-            signOff: signOffFor(ctx.db, t.id),
-            highRisk:
-              (item.latestVerification?.riskScore ?? 0) >= 60 ||
-              t.aiAuthoredPct >= 75 ||
-              t.priority === "p0",
-          };
-        })
-        .sort((a, b) =>
-          (a.pullRequest?.openedAt ?? "").localeCompare(b.pullRequest?.openedAt ?? ""),
-        );
-    },
-  },
-
-  // ---- evidence
-  {
-    method: "GET",
-    path: "/evidence",
-    auth: "any",
-    summary:
-      "Evidence packs (one per task with activity). Filters: applicationId, type, from, to, q.",
-    response: z.array(EvidencePackSchema),
-    handler: (ctx) => {
-      const orgs = visibleOrgIds(ctx);
-      const q = (ctx.query.get("q") ?? "").toLowerCase();
-      return filterTasks(
-        ctx,
-        ctx.db.tasks.filter((t) => orgs.includes(t.orgId)),
-      )
-        .filter((t) => !q || t.title.toLowerCase().includes(q) || t.id.includes(q))
-        .map((t) => evidencePack(ctx.db, t, ctx.now))
-        .sort((a, b) => b.lastEventAt.localeCompare(a.lastEventAt));
-    },
-  },
-  {
-    method: "GET",
-    path: "/evidence/export",
-    auth: "any",
-    summary: "Export evidence packs as JSON. ?ids=pack_task_001,pack_task_002",
-    response: z.object({
-      exportedAt: z.string(),
-      exportedBy: z.string(),
-      packs: z.array(EvidencePackSchema),
-    }),
-    handler: (ctx) => {
-      const user = requireUser(ctx);
-      const ids = (ctx.query.get("ids") ?? "").split(",").filter(Boolean);
-      const orgs = visibleOrgIds(ctx);
-      const packs = ctx.db.tasks
-        .filter((t) => orgs.includes(t.orgId) && ids.includes(`pack_${t.id}`))
-        .map((t) => evidencePack(ctx.db, t, ctx.now));
-      return { exportedAt: toIso(ctx.now), exportedBy: user.name, packs };
-    },
-  },
-
-  // ---- reports
-  {
-    method: "GET",
-    path: "/reports/savings",
-    auth: "any",
-    summary:
-      "Monthly savings report computed from delivered tasks. ?month=YYYY-MM (default: latest) ?orgId= (console)",
-    response: SavingsReportSchema,
-    handler: (ctx) => {
-      const orgId = portalOrgId(ctx);
-      // Default: the last complete calendar month (the current month is still partial).
-      const d = new Date(ctx.now);
-      const lastFull = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1))
-        .toISOString()
-        .slice(0, 7);
-      return savingsReportFor(ctx.db, orgId, ctx.query.get("month") ?? lastFull, ctx.now);
-    },
-  },
-  {
-    method: "GET",
-    path: "/reports/sla",
-    auth: "any",
-    summary: "SLA report: target vs actual per metric, breaches with reasons. ?orgId= (console)",
-    response: SlaReportSchema,
-    handler: (ctx) => slaReportFor(ctx.db, portalOrgId(ctx), ctx.now),
-  },
-
-  // ---- console: clients & ops
-  {
-    method: "GET",
-    path: "/clients",
-    auth: "console",
-    summary: "Client list. Margin is only included for delivery managers.",
-    response: z.array(ClientSummarySchema),
-    handler: (ctx) => {
-      const mgr = isManager(requireUser(ctx).role);
-      return ctx.db.organizations.map((o) => clientSummary(ctx.db, o.id, mgr, ctx.now));
-    },
-  },
-  {
-    method: "GET",
-    path: "/clients/:id",
-    auth: "console",
-    summary: "Client detail: contract, SLA, applications, contacts, recent tasks, integrations.",
-    response: ClientDetailSchema,
-    handler: (ctx) => {
-      const org = ctx.db.organizations.find((o) => o.id === ctx.params.id);
-      if (!org) throw new HttpError(404, "Client not found");
-      const mgr = isManager(requireUser(ctx).role);
-      return {
-        client: clientSummary(ctx.db, org.id, mgr, ctx.now),
-        contract: ctx.db.contracts.find((c) => c.orgId === org.id) ?? null,
-        applications: ctx.db.applications
-          .filter((a) => a.orgId === org.id)
-          .map((a) => applicationSummary(ctx.db, a.id, ctx.now)),
-        contacts: ctx.db.users.filter((u) => u.orgId === org.id),
-        tasks: ctx.db.tasks
-          .filter((t) => t.orgId === org.id)
-          .map((t) => taskListItem(ctx.db, t, ctx.now))
-          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-          .slice(0, 10),
-        integrations: ctx.db.integrations.filter((i) => i.orgId === org.id),
-      };
-    },
-  },
-  {
-    method: "GET",
-    path: "/ops",
-    auth: "manager",
-    summary: "Ops dashboard KPIs and charts (delivery manager only).",
-    response: OpsDashboardSchema,
-    handler: (ctx) => opsDashboard(ctx.db, ctx.now),
-  },
-  {
-    method: "GET",
-    path: "/engineers",
-    auth: "console",
-    summary: "ForgePilot engineers (for assignee pickers).",
-    response: z.array(UserSchema),
-    handler: (ctx) =>
-      ctx.db.users.filter((u) => u.role === "fp_engineer" || u.role === "fp_manager"),
-  },
-
-  // ---- team
-  {
-    method: "GET",
-    path: "/team",
-    auth: "portal",
-    summary: "Users in the client organization.",
-    response: z.array(UserSchema),
-    handler: (ctx) => ctx.db.users.filter((u) => u.orgId === portalOrgId(ctx)),
-  },
-  {
-    method: "POST",
-    path: "/team/invite",
-    auth: "portal",
-    summary: "Invite a user to the client organization (client_admin only).",
-    request: InviteUserInputSchema,
-    response: UserSchema,
-    handler: (ctx) => {
-      const user = requireUser(ctx);
-      if (!canManageTeam(user.role))
-        throw new HttpError(403, "Only client admins can invite users");
-      const input = parseBody(InviteUserInputSchema, ctx.body);
-      if (ctx.db.users.some((u) => u.email.toLowerCase() === input.email.toLowerCase()))
-        throw new HttpError(409, "Someone with that email is already on the team");
-      const invited: User = {
-        id: newId("u"),
-        ...input,
-        orgId: user.orgId,
-        status: "invited",
-        title: "",
-      };
-      ctx.db.users.push(invited);
-      return invited;
-    },
-  },
-
-  // ---- integrations
-  {
-    method: "GET",
-    path: "/integrations",
-    auth: "any",
-    summary: "Integration catalog merged with this organization's connections. ?orgId= (console)",
-    response: z.array(IntegrationViewSchema),
-    handler: (ctx) => {
-      const orgId = portalOrgId(ctx);
-      return INTEGRATION_PROVIDERS.map((p) => ({
-        providerId: p.id,
-        name: p.name,
-        category: p.category,
-        description: p.description,
-        availability: p.availability,
-        scopes: p.scopes,
-        connection:
-          ctx.db.integrations.find((i) => i.orgId === orgId && i.providerId === p.id) ?? null,
-      }));
-    },
-  },
-  {
-    method: "POST",
-    path: "/integrations/:providerId/connect",
-    auth: "portal",
-    summary: "Mock OAuth connect for an integration (client_admin only).",
-    request: ConnectIntegrationInputSchema,
-    response: IntegrationViewSchema,
-    handler: (ctx) => {
-      const user = requireUser(ctx);
-      if (!canManageTeam(user.role))
-        throw new HttpError(403, "Only client admins can change integrations");
-      const provider = providerById(ctx.params.providerId);
-      if (!provider) throw new HttpError(404, "Unknown integration");
-      if (provider.availability !== "available") throw new HttpError(409, "Not available yet");
-      const { account } = parseBody(ConnectIntegrationInputSchema, ctx.body);
-      const orgId = portalOrgId(ctx);
-      let conn = ctx.db.integrations.find((i) => i.orgId === orgId && i.providerId === provider.id);
-      if (!conn) {
-        conn = {
-          id: newId("int"),
-          orgId,
-          providerId: provider.id,
-          status: "connected",
-          account,
-          connectedAt: toIso(ctx.now),
-          scopes: provider.scopes,
-        };
-        ctx.db.integrations.push(conn);
-      } else {
-        Object.assign(conn, {
-          status: "connected",
-          account,
-          connectedAt: toIso(ctx.now),
-          scopes: provider.scopes,
-          error: undefined,
-        });
-      }
-      return {
-        providerId: provider.id,
-        name: provider.name,
-        category: provider.category,
-        description: provider.description,
-        availability: provider.availability,
-        scopes: provider.scopes,
-        connection: conn,
-      };
-    },
-  },
-  {
-    method: "POST",
-    path: "/integrations/:providerId/disconnect",
-    auth: "portal",
-    summary: "Disconnect an integration (client_admin only).",
-    response: OkSchema,
-    handler: (ctx) => {
-      const user = requireUser(ctx);
-      if (!canManageTeam(user.role))
-        throw new HttpError(403, "Only client admins can change integrations");
-      const conn = ctx.db.integrations.find(
-        (i) => i.orgId === portalOrgId(ctx) && i.providerId === ctx.params.providerId,
-      );
-      if (conn)
-        Object.assign(conn, { status: "disconnected", connectedAt: null, error: undefined });
-      return { ok: true };
-    },
-  },
-
-  // ---- notifications
-  {
-    method: "GET",
-    path: "/notifications",
-    auth: "any",
-    summary: "Notifications for the current user's area (portal: their org).",
-    response: NotificationListSchema,
-    handler: (ctx) => {
-      const u = requireUser(ctx);
-      const area = areaForRole(u.role);
-      return ctx.db.notifications
-        .filter((n) => n.audience === area && (area === "console" || n.orgId === u.orgId))
-        .sort((a, b) => b.at.localeCompare(a.at));
-    },
-  },
-  {
-    method: "POST",
-    path: "/notifications/read",
-    auth: "any",
-    summary: "Mark notifications read. Body: { ids?: string[] } (omit for all).",
-    request: z.object({ ids: z.array(z.string()).optional() }),
-    response: OkSchema,
-    handler: (ctx) => {
-      const u = requireUser(ctx);
-      const { ids } = parseBody(z.object({ ids: z.array(z.string()).optional() }), ctx.body ?? {});
-      const area = areaForRole(u.role);
-      ctx.db.notifications.forEach((n) => {
-        if (n.audience !== area || (area === "portal" && n.orgId !== u.orgId)) return;
-        if (!ids || ids.includes(n.id)) n.read = true;
-      });
-      return { ok: true };
-    },
-  },
-
-  // ---- search
-  {
-    method: "GET",
-    path: "/search",
-    auth: "any",
-    summary: "Global search across clients, applications, repositories and tasks. ?q=",
-    response: z.array(SearchResultSchema),
-    handler: (ctx) => {
-      const u = requireUser(ctx);
-      const q = (ctx.query.get("q") ?? "").trim().toLowerCase();
-      const area = areaForRole(u.role);
-      const orgs = visibleOrgIds(ctx);
-      const base = area === "portal" ? "/portal" : "/console";
-      const hit = (s: string) => !q || s.toLowerCase().includes(q);
-      const out: z.infer<typeof SearchResultSchema>[] = [];
-      if (area === "console")
-        ctx.db.organizations
-          .filter((o) => hit(o.name))
-          .forEach((o) =>
-            out.push({
-              kind: "client",
-              id: o.id,
-              title: o.name,
-              subtitle: o.industry,
-              href: `/console/clients/${o.id}`,
-            }),
-          );
-      ctx.db.applications
-        .filter((a) => orgs.includes(a.orgId) && hit(a.name))
-        .forEach((a) =>
-          out.push({
-            kind: "application",
-            id: a.id,
-            title: a.name,
-            subtitle: ctx.db.organizations.find((o) => o.id === a.orgId)?.name ?? "",
-            href:
-              area === "portal" ? `/portal/applications/${a.id}` : `/console/clients/${a.orgId}`,
-          }),
-        );
-      ctx.db.repositories
-        .filter((r) => hit(repoName(r.url)))
-        .forEach((r) => {
-          const s = repositorySummary(ctx.db, r.id);
-          if (orgs.includes(s.organizationId))
-            out.push({
-              kind: "repository",
-              id: r.id,
-              title: s.name,
-              subtitle: s.applicationName,
-              href:
-                area === "portal"
-                  ? `/portal/applications/${r.applicationId}?tab=repositories`
-                  : `/console/repositories/${r.id}`,
-            });
-        });
-      ctx.db.tasks
-        .filter((t) => orgs.includes(t.orgId) && (hit(t.title) || hit(t.id) || hit(t.source.ref)))
-        .forEach((t) =>
-          out.push({
-            kind: "task",
-            id: t.id,
-            title: t.title,
-            subtitle: `${t.id} · ${t.source.ref}`,
-            href: `${base}/${area === "portal" ? "work" : "tasks"}/${t.id}`,
-          }),
-        );
-      return out.slice(0, 40);
-    },
-  },
-
-  // ---- onboarding
-  {
-    method: "GET",
-    path: "/onboarding/git-repos",
-    auth: "portal",
-    summary: "Repositories visible after the mock Git OAuth connect. ?provider=&account=",
-    response: z.array(GitRepoCandidateSchema),
-    handler: (ctx) =>
-      gitCandidates(
-        ctx.query.get("provider") ?? "github",
-        ctx.query.get("account") ?? "acme",
-        ctx.now,
-      ),
-  },
-  {
-    method: "POST",
-    path: "/onboarding",
-    auth: "portal",
-    summary:
-      "Complete onboarding: create organization, contract, applications, repositories and start health scans.",
-    request: OnboardingInputSchema,
-    response: OnboardingResultSchema,
-    handler: (ctx) => {
-      const input = parseBody(OnboardingInputSchema, ctx.body);
-      const { db, now } = ctx;
-      const orgId = newId("org");
-      db.organizations.push({
-        id: orgId,
-        name: input.company.name,
-        industry: input.company.industry,
-        region: input.company.region,
-        tier: input.tier,
-        status: "onboarding",
-        onboardedAt: toIso(now),
-        domain: input.company.contactEmail.split("@")[1],
-      });
-      const priceByTier = { maintain: 9000, maintain_assure: 12000, full_run: 18000 } as const;
-      db.contracts.push({
-        id: newId("ctr"),
-        orgId,
-        tier: input.tier,
-        pricePerAppMonthlyUsd: priceByTier[input.tier],
-        priorVendorHourlyRateUsd: 50,
-        priorVendorBaselineHoursPerAppMonthly: 220,
-        slaTargets: {
-          criticalCvePatchHours: 72,
-          verificationMinutesP90: 15,
-          approvalTurnaroundHours: 48,
-          slaMetTargetPct: 95,
-        },
-        startDate: toIso(now).slice(0, 10),
-        endDate: toIso(now + 365 * 86_400_000).slice(0, 10),
-      });
-      const contactId = newId("u");
-      db.users.push({
-        id: contactId,
-        name: input.company.contactName,
-        email: input.company.contactEmail,
-        role: "client_admin",
-        orgId,
-        status: "invited",
-        title: "Primary contact",
-      });
-      db.integrations.push({
-        id: newId("int"),
-        orgId,
-        providerId: input.provider,
-        status: "connected",
-        account: input.account,
-        connectedAt: toIso(now),
-        scopes: providerById(input.provider)?.scopes ?? [],
-      });
-      const appIds: string[] = [];
-      const repoIds: string[] = [];
-      const scanIds: string[] = [];
-      const appByName = new Map<string, string>();
-      input.mapping.forEach((m, i) => {
-        const repo = input.repositories.find((r) => r.fullName === m.repoFullName);
-        if (!repo) return;
-        let appId = appByName.get(m.applicationName);
-        if (!appId) {
-          appId = newId("app");
-          appByName.set(m.applicationName, appId);
-          db.applications.push({
-            id: appId,
-            orgId,
-            name: m.applicationName,
-            criticality: m.criticality,
-            environments: ["dev", "staging", "prod"],
-            ownerUserIds: [contactId],
-            tier: input.tier,
-          });
-          appIds.push(appId);
-        }
-        const seed = (repo.fullName.length * 13 + i * 7) % 30;
-        const dims = {
-          dependencies: 50 + seed,
-          security: 45 + ((seed * 3) % 40),
-          buildStability: 60 + ((seed * 5) % 30),
-          tests: 35 + ((seed * 2) % 40),
-          docs: 40 + ((seed * 7) % 40),
-        };
-        const score = Math.round(
-          (dims.dependencies + dims.security + dims.buildStability + dims.tests + dims.docs) / 5,
-        );
-        const repoId = newId("repo");
-        const providerHost = {
-          github: "github.com",
-          gitlab: "gitlab.com",
-          bitbucket: "bitbucket.org",
-          azure_devops: "dev.azure.com",
-        }[input.provider];
+      const input = body(S.ConnectReposInputSchema, ctx.body);
+      const plan = planById(org(ctx).plan);
+      const trial = org(ctx).trialEndsAt && Date.parse(org(ctx).trialEndsAt!) > now;
+      const limit = trial ? planById("team").limits.repositories : plan.limits.repositories;
+      if (limit !== null && inOrg(db.repositories, ctx.orgId).length + input.repositories.length > limit)
+        throw new HttpError(402, `Your plan allows ${limit} repositories. Upgrade to connect more.`);
+      let projectId = input.projectId;
+      if (!projectId) {
+        projectId = newId("proj");
+        db.projects.push({ id: projectId, orgId: ctx.orgId, name: input.newProjectName || "My project", description: "", color: "violet", createdAt: toIso(now) });
+      } else own(ctx, db.projects, projectId, "Project");
+      const ids = input.repositories.map((fullName, i) => {
+        const py = /python|pipeline|ledger|payments-api|data/i.test(fullName);
+        const id = newId("repo");
+        const health = { dependencies: 78 - i * 3, security: 84 - i * 5, buildStability: 90, tests: 72, docs: null };
         db.repositories.push({
-          id: repoId,
-          applicationId: appId,
-          provider: input.provider,
-          url: `https://${providerHost}/${repo.fullName}`,
-          language: repo.language,
-          defaultBranch: repo.defaultBranch,
-          health: { score, ...dims },
-          coveragePct: dims.tests - 5,
-          flakyTests: seed % 3,
-          lastScanAt: toIso(now),
+          id, projectId: projectId!, orgId: ctx.orgId, provider: "github", fullName, url: `https://github.com/${fullName}`, defaultBranch: "main", private: true,
+          languages: [py ? "python" : "typescript"], frameworks: py ? ["FastAPI"] : ["Next.js", "React"], ecosystems: [py ? "pypi" : "npm"],
+          testCommands: py ? ["pytest -q"] : ["npm test", "npx playwright test"], ciWorkflows: ["ci.yml"], indexedSha: fakeSha(fullName),
+          indexedAt: toIso(now), indexStatus: "indexing", indexReadyAt: now + INDEX_MS + i * 800, fileCount: 300 + i * 211, hasDocs: true, scanSchedule: "daily",
+          health: { ...health, score: Math.round((0.2 * health.dependencies + 0.25 * health.security + 0.2 * health.buildStability + 0.2 * health.tests) / 0.85), scoreVersion: "v1.2" },
         });
-        repoIds.push(repoId);
-        const findingsSeed = [
-          [
-            "security",
-            "critical",
-            "Critical CVE in base image OpenSSL",
-            "Patch base image (72h SLA).",
-          ],
-          [
-            "dependencies",
-            "high",
-            "Runtime approaching end of support",
-            "Schedule LTS upgrade in the first 30 days.",
-          ],
-          [
-            "tests",
-            "medium",
-            "Low coverage on core module",
-            "Generate regression tests for top journeys.",
-          ],
-          ["docs", "low", "Missing runbook", "Add runbook with rollback steps."],
-        ] as const;
-        findingsSeed
-          .slice(0, 2 + (seed % 3))
-          .forEach(([dimension, severity, title, recommendation]) =>
-            db.findings.push({
-              id: newId("fnd"),
-              repositoryId: repoId,
-              dimension,
-              severity,
-              title,
-              recommendation,
-              status: "open",
-              detectedAt: toIso(now),
-            }),
-          );
-        db.healthHistory.push({ applicationId: appId, weekStart: toIso(now).slice(0, 10), score });
-        const scanId = newId("scan");
-        db.scans.push({
-          id: scanId,
-          repositoryId: repoId,
-          startedAt: toIso(now),
-          finishedAt: null,
-          status: "running",
-          healthScore: null,
-          findingsCount: null,
-          trigger: "onboarding",
-          simulatedEndsAt: now + SCAN_MS + i * 1200,
-        });
-        scanIds.push(scanId);
+        const suites = py
+          ? [["Unit", "unit", "pytest -q tests/unit", ["app/**"]], ["API (HTTP assertions)", "api", "pytest tests/api", ["app/api/**"]]]
+          : [["Unit", "unit", "npm test", ["src/**"]], ["End-to-end (Playwright)", "playwright", "npx playwright test", ["app/**", "src/**"]]];
+        suites.forEach(([name, type, command, pathRules]) =>
+          db.testSuites.push({ id: newId("suite"), repositoryId: id, orgId: ctx.orgId, name: name as string, type: type as "unit", command: command as string, environment: type === "playwright" ? "preview" : "ci-sandbox", pathRules: pathRules as string[], timeoutMin: 20, owner: me(ctx).id, enabled: true, required: type !== "unit", flakyRatePct: 0, testCount: type === "unit" ? 120 : 24 }),
+        );
+        db.healthHistory.push({ repositoryId: id, weekStart: toIso(now).slice(0, 10), score: db.repositories.at(-1)!.health.score });
+        audit(db, ctx.orgId, person(ctx), "repository.connected", `repo:${id}`, fullName, now);
+        return id;
       });
-      return { organizationId: orgId, applicationIds: appIds, repositoryIds: repoIds, scanIds };
+      return { projectId, repositoryIds: ids };
     },
   },
   {
-    method: "GET",
-    path: "/onboarding/:orgId/status",
-    auth: "portal",
-    summary: "Onboarding scan progress and, when done, the health report + 90-day plan.",
-    response: OnboardingStatusSchema,
+    method: "POST", path: "/repositories/:id/config", auth: "repo.connect", summary: "Confirm discovered test commands and scan schedule.",
+    request: S.RepoConfigInputSchema, response: S.RepositorySchema,
     handler: (ctx) => {
-      const org = ctx.db.organizations.find((o) => o.id === ctx.params.orgId);
-      if (!org) throw new HttpError(404, "Onboarding not found");
-      const apps = ctx.db.applications.filter((a) => a.orgId === org.id);
-      const repos = ctx.db.repositories.filter((r) => apps.some((a) => a.id === r.applicationId));
-      const scans = ctx.db.scans
-        .filter((s) => repos.some((r) => r.id === s.repositoryId) && s.trigger === "onboarding")
-        .map((s) => ({
-          ...s,
-          repositoryName: repoName(repos.find((r) => r.id === s.repositoryId)!.url),
-        }));
-      const done = scans.length > 0 && scans.every((s) => s.status === "completed");
-      const progress = scans.length
-        ? Math.round(
-            scans.reduce((sum, s) => {
-              if (s.status === "completed") return sum + 100;
-              const start = Date.parse(s.startedAt);
-              const end = (s as { simulatedEndsAt?: number }).simulatedEndsAt ?? start + SCAN_MS;
-              return sum + Math.min(95, ((ctx.now - start) / (end - start)) * 100);
-            }, 0) / scans.length,
-          )
-        : 0;
-      if (done && org.status === "onboarding") org.status = "active";
-      const sev = { critical: 0, high: 1, medium: 2, low: 3 } as const;
+      const r = own(ctx, ctx.db.repositories, ctx.params.id, "Repository");
+      Object.assign(r, body(S.RepoConfigInputSchema, ctx.body));
+      return r;
+    },
+  },
+  {
+    method: "POST", path: "/onboarding/first-run", auth: "test.run", summary: "Run the first ShipSafe test run or CodeKeeper scan for a repository.",
+    request: S.FirstRunInputSchema, response: S.FirstRunResultSchema,
+    handler: (ctx) => {
+      const input = body(S.FirstRunInputSchema, ctx.body);
+      const repo = own(ctx, ctx.db.repositories, input.repositoryId, "Repository");
+      if (input.kind === "scan") {
+        const s = startScan(ctx.db, repo, "onboarding", ctx.now);
+        return { kind: "scan", id: s.id, href: `/app/repositories/${repo.id}` };
+      }
+      const run = startTestRun(ctx.db, repo, null, "manual", { now: ctx.now, branch: repo.defaultBranch });
+      return { kind: "test", id: run.id, href: `/app/shipsafe/runs/${run.id}` };
+    },
+  },
+
+  // ===== overview, projects, repositories
+  {
+    method: "GET", path: "/overview", auth: "member", summary: "Workspace overview: North Star, KPIs, lifecycle funnel, attention list, live sessions, activity, setup checklist.",
+    response: S.OverviewSchema,
+    handler: (ctx) => {
+      const { db, now, orgId } = ctx;
+      const o = org(ctx);
+      const tasks = inOrg(db.tasks, orgId);
+      const prs = inOrg(db.pullRequests, orgId);
+      const runs = inOrg(db.testRuns, orgId);
+      const repos = inOrg(db.repositories, orgId);
+      const findings = inOrg(db.findings, orgId);
+      const weeks = Array.from({ length: 8 }, (_, i) => {
+        const end = now - (7 - i) * 7 * DAY;
+        return { date: toIso(end).slice(0, 10), value: verifiedTasks(db, orgId, end - 7 * DAY, end + 1).length };
+      });
+      const recent = runs.filter((r) => Date.parse(r.startedAt) > now - 7 * DAY && (r.status === "passed" || r.status === "failed"));
+      const prs30 = prs.filter((p) => Date.parse(p.openedAt) > now - 30 * DAY);
+      const attention: S.AttentionItem[] = [];
+      inOrg(db.approvals, orgId).filter((a) => a.status === "pending").forEach((a) => attention.push({ id: a.id, kind: "approval", title: a.title, detail: `Needs ${a.approverRole} approval`, href: "/app/approvals", severity: "warning" }));
+      prs.filter((p) => p.status === "open" && p.checkStatus === "failed").forEach((p) => attention.push({ id: p.id, kind: "failed_check", title: `ShipSafe failed on #${p.number}: ${p.title}`, detail: db.repositories.find((r) => r.id === p.repositoryId)!.fullName, href: `/app/pull-requests/${p.id}`, severity: "danger" }));
+      tasks.filter((t) => t.status === "review_ready").forEach((t) => attention.push({ id: t.id, kind: "review_ready", title: `Ready for review: ${t.title}`, detail: "Verified by ShipSafe", href: t.pullRequestId ? `/app/pull-requests/${t.pullRequestId}` : `/app/devpilot/tasks/${t.id}`, severity: "info" }));
+      findings.filter((f) => f.status === "open" && f.severity === "critical").forEach((f) => attention.push({ id: f.id, kind: "critical_finding", title: f.title, detail: db.repositories.find((r) => r.id === f.repositoryId)!.fullName, href: `/app/codekeeper/findings?finding=${f.id}`, severity: "danger" }));
+      inOrg(db.integrations, orgId).filter((i) => i.status === "error").forEach((i) => attention.push({ id: i.id, kind: "integration", title: `${providerById(i.providerId)?.name ?? i.providerId} needs reconnecting`, detail: i.error ?? "", href: "/app/integrations", severity: "warning" }));
+      const spend = monthToDateSpend(db, orgId, now);
+      if (o.budget.monthlyLimitUsd && spend / o.budget.monthlyLimitUsd >= 0.8) attention.push({ id: "budget", kind: "budget", title: `${Math.round((spend / o.budget.monthlyLimitUsd) * 100)}% of monthly budget used`, detail: `$${spend.toFixed(0)} of $${o.budget.monthlyLimitUsd}`, href: "/app/billing", severity: "warning" });
+      const order = { danger: 0, warning: 1, info: 2 };
+      attention.sort((a, b) => order[a.severity] - order[b.severity]);
+      const done = tasks.filter((t) => ["review_ready", "completed", "failed"].includes(t.status));
+      const avgHealth = repos.length ? Math.round(repos.reduce((s, r) => s + r.health.score, 0) / repos.length) : null;
+      const runsToday = runs.filter((r) => Date.parse(r.startedAt) > now - DAY).length;
       return {
-        organization: org,
-        scans,
-        done,
-        progressPct: progress,
-        applications: apps.map((a) => applicationSummary(ctx.db, a.id, ctx.now)),
-        topFindings: ctx.db.findings
-          .filter((f) => repos.some((r) => r.id === f.repositoryId))
-          .map((f) => ({
-            ...f,
-            repositoryName: repoName(repos.find((r) => r.id === f.repositoryId)!.url),
-          }))
-          .sort((a, b) => sev[a.severity] - sev[b.severity])
-          .slice(0, 8),
-        plan90: [
-          {
-            window: "Days 0–30",
-            items: [
-              "Patch all critical CVEs within 72h SLA",
-              "Turn on the verification gate for every PR",
-              "Baseline regression suite for top 5 journeys",
-            ],
-          },
-          {
-            window: "Days 31–60",
-            items: [
-              "Upgrade runtimes approaching end of support",
-              "Raise coverage on low-scoring modules",
-              "Fix flaky tests",
-            ],
-          },
-          {
-            window: "Days 61–90",
-            items: [
-              "Batch dependency upgrades monthly",
-              "Runbooks for each application",
-              "First quarterly savings review",
-            ],
-          },
+        northStar: { value: verifiedTasks(db, orgId, monthStart(now), now + 1).length, previous: verifiedTasks(db, orgId, monthStart(now - 32 * DAY), monthStart(now)).length, weekly: weeks },
+        kpis: {
+          activeSessions: inOrg(db.sessions, orgId).filter((s) => s.status === "running" || s.status === "waiting").length,
+          prsAwaitingReview: prs.filter((p) => p.status === "open" && p.reviewState === "review_requested").length,
+          verificationCoveragePct: pct(prs30.filter((p) => p.latestRunId).length, prs30.length),
+          openBugs: inOrg(db.bugs, orgId).filter((b) => b.status === "open" || b.status === "fix_in_progress").length,
+          avgHealth,
+          passRatePct: pct(recent.filter((r) => r.status === "passed").length, recent.length),
+          spendUsd: spend,
+          budgetUsd: o.budget.monthlyLimitUsd,
+        },
+        lifecycle: [
+          { key: "plan", label: "Planned", count: tasks.filter((t) => t.status === "draft" || t.status === "queued").length, href: "/app/devpilot/tasks?status=draft" },
+          { key: "execute", label: "Agents running", count: tasks.filter((t) => t.status === "running" || t.status === "waiting_input").length, href: "/app/devpilot" },
+          { key: "verify", label: "Verifying", count: tasks.filter((t) => t.status === "verifying").length + prs.filter((p) => p.status === "open" && !p.taskId && p.checkStatus === "running").length, href: "/app/shipsafe" },
+          { key: "review", label: "Ready for review", count: tasks.filter((t) => t.status === "review_ready").length, href: "/app/pull-requests?filter=review" },
+          { key: "merge", label: "Merged (30d)", count: prs.filter((p) => p.status === "merged" && Date.parse(p.mergedAt!) > now - 30 * DAY).length, href: "/app/pull-requests?status=merged" },
+        ],
+        attention: attention.slice(0, 8),
+        activity: activity(db, inOrg(db.auditLogs, orgId).slice(0, 12)),
+        liveSessions: inOrg(db.sessions, orgId).filter((s) => s.status === "running" || s.status === "waiting").map((s) => sessionListItem(db, s)),
+        modules: {
+          devpilot: { running: tasks.filter((t) => t.status === "running").length, reviewReady: tasks.filter((t) => t.status === "review_ready").length, successRatePct: pct(done.filter((t) => t.status !== "failed").length, done.length) },
+          shipsafe: { runsToday, passRatePct: pct(recent.filter((r) => r.status === "passed").length, recent.length), openBugs: inOrg(db.bugs, orgId).filter((b) => b.status !== "resolved" && b.status !== "wont_fix").length },
+          codekeeper: { avgHealth, openFindings: findings.filter((f) => f.status === "open").length, critical: findings.filter((f) => f.status === "open" && f.severity === "critical").length },
+        },
+        setup: [
+          { key: "github", label: "Install the GitHub App", done: inOrg(db.integrations, orgId).some((i) => i.providerId === "github" && i.status === "connected"), href: "/onboarding" },
+          { key: "repo", label: "Connect a repository", done: repos.length > 0, href: "/onboarding" },
+          { key: "run", label: "Run your first verification", done: runs.length > 0, href: "/app/shipsafe" },
+          { key: "task", label: "Delegate a task to an agent", done: tasks.length > 0, href: "/app/devpilot/tasks?new=1" },
+          { key: "team", label: "Invite a teammate", done: db.memberships.filter((m) => m.orgId === orgId).length > 1 || inOrg(db.invitations, orgId).length > 0, href: "/app/settings?tab=members" },
         ],
       };
     },
   },
-
-  // ---- demo
   {
-    method: "POST",
-    path: "/demo/reset",
-    auth: "any",
-    summary: "Reset all mock data to the seed (demo mode).",
-    response: OkSchema,
+    method: "GET", path: "/projects", auth: "member", summary: "Projects with health, PR, session and finding counts.",
+    response: z.array(S.ProjectSummarySchema),
+    handler: (ctx) => inOrg(ctx.db.projects, ctx.orgId).map((p) => projectSummary(ctx.db, p.id, ctx.now)),
+  },
+  {
+    method: "POST", path: "/projects", auth: "repo.connect", summary: "Create a project.",
+    request: S.NewProjectInputSchema, response: S.ProjectSchema,
+    handler: (ctx) => {
+      const input = body(S.NewProjectInputSchema, ctx.body);
+      const limit = planById(org(ctx).plan).limits.projects;
+      if (limit !== null && inOrg(ctx.db.projects, ctx.orgId).length >= limit) throw new HttpError(402, `Your plan allows ${limit} project(s). Upgrade for more.`);
+      const p = { id: newId("proj"), orgId: ctx.orgId, name: input.name, description: input.description, color: "violet", createdAt: toIso(ctx.now) };
+      ctx.db.projects.push(p);
+      return p;
+    },
+  },
+  {
+    method: "GET", path: "/projects/:id", auth: "member", summary: "Project detail: repositories, tasks, PRs, runs and findings.",
+    response: S.ProjectDetailSchema,
+    handler: (ctx) => {
+      const { db } = ctx;
+      const p = own(ctx, db.projects, ctx.params.id, "Project");
+      const repoIds = new Set(db.repositories.filter((r) => r.projectId === p.id).map((r) => r.id));
+      return {
+        project: projectSummary(db, p.id, ctx.now),
+        repositories: [...repoIds].map((id) => repositorySummary(db, id)),
+        tasks: db.tasks.filter((t) => t.projectId === p.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((t) => taskListItem(db, t)),
+        pullRequests: db.pullRequests.filter((x) => repoIds.has(x.repositoryId)).sort((a, b) => b.openedAt.localeCompare(a.openedAt)).map((x) => prListItem(db, x)),
+        runs: db.testRuns.filter((r) => repoIds.has(r.repositoryId)).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 15).map((r) => runListItem(db, r)),
+        findings: db.findings.filter((f) => repoIds.has(f.repositoryId) && f.status !== "resolved").map((f) => findingListItem(db, f)),
+      };
+    },
+  },
+  {
+    method: "GET", path: "/repositories", auth: "member", summary: "Connected repositories. ?projectId=",
+    response: z.array(S.RepositorySummarySchema),
+    handler: (ctx) => inOrg(ctx.db.repositories, ctx.orgId).filter((r) => !ctx.query.get("projectId") || r.projectId === ctx.query.get("projectId")).map((r) => repositorySummary(ctx.db, r.id)),
+  },
+  {
+    method: "GET", path: "/repositories/:id", auth: "member", summary: "Repository detail: suites, findings, health history, scans, runs, PRs.",
+    response: S.RepositoryDetailSchema,
+    handler: (ctx) => {
+      const { db } = ctx;
+      const r = own(ctx, db.repositories, ctx.params.id, "Repository");
+      return {
+        repository: repositorySummary(db, r.id),
+        suites: db.testSuites.filter((s) => s.repositoryId === r.id),
+        findings: db.findings.filter((f) => f.repositoryId === r.id),
+        dependencies: db.dependencies.filter((d) => d.repositoryId === r.id).length,
+        history: db.healthHistory.filter((h) => h.repositoryId === r.id),
+        scans: db.scans.filter((s) => s.repositoryId === r.id).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 10),
+        runs: db.testRuns.filter((x) => x.repositoryId === r.id).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 15).map((x) => runListItem(db, x)),
+        pullRequests: db.pullRequests.filter((p) => p.repositoryId === r.id).sort((a, b) => b.openedAt.localeCompare(a.openedAt)).map((p) => prListItem(db, p)),
+      };
+    },
+  },
+  {
+    method: "POST", path: "/repositories/:id/scans", auth: "test.run", summary: "Start a CodeKeeper scan of the repository.",
+    response: S.ScanSchema,
+    handler: (ctx) => {
+      const r = own(ctx, ctx.db.repositories, ctx.params.id, "Repository");
+      const running = ctx.db.scans.find((s) => s.repositoryId === r.id && s.status === "running");
+      return running ?? startScan(ctx.db, r, "manual", ctx.now);
+    },
+  },
+
+  // ===== DevPilot
+  {
+    method: "GET", path: "/devpilot/overview", auth: "member", summary: "DevPilot command centre: KPIs, board, live sessions, agents.",
+    response: S.DevPilotOverviewSchema,
+    handler: (ctx) => {
+      const { db, now, orgId } = ctx;
+      const tasks = inOrg(db.tasks, orgId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((t) => taskListItem(db, t));
+      const done = tasks.filter((t) => ["review_ready", "completed", "failed"].includes(t.status));
+      const sessions30 = inOrg(db.sessions, orgId).filter((s) => Date.parse(s.startedAt) > now - 30 * DAY);
+      const board: Record<string, S.TaskListItem[]> = {};
+      BOARD_COLUMNS.forEach((c) => (board[c.key] = tasks.filter((t) => c.statuses.includes(t.status))));
+      return {
+        kpis: {
+          running: tasks.filter((t) => t.status === "running").length,
+          waiting: tasks.filter((t) => t.status === "waiting_input").length,
+          reviewReady: tasks.filter((t) => t.status === "review_ready").length,
+          successRatePct: pct(done.filter((t) => t.status !== "failed").length, done.length),
+          avgCostUsd: sessions30.length ? Math.round((sessions30.reduce((s, x) => s + x.costUsd, 0) / sessions30.length) * 100) / 100 : 0,
+          spend30dUsd: Math.round(sessions30.reduce((s, x) => s + x.costUsd, 0) * 100) / 100,
+        },
+        board,
+        liveSessions: inOrg(db.sessions, orgId).filter((s) => s.status === "running" || s.status === "waiting").map((s) => sessionListItem(db, s)),
+        agents: inOrg(db.agents, orgId).map((a) => {
+          const ss = sessions30.filter((s) => s.agentId === a.id);
+          const ended = ss.filter((s) => s.status === "completed" || s.status === "failed");
+          return { ...a, running: ss.filter((s) => s.status === "running").length, sessions30d: ss.length, successRatePct: pct(ended.filter((s) => s.status === "completed").length, ended.length), costUsd30d: Math.round(ss.reduce((s, x) => s + x.costUsd, 0) * 100) / 100 };
+        }),
+      };
+    },
+  },
+  {
+    method: "GET", path: "/tasks", auth: "member", summary: "Tasks. Filters: status, projectId, repositoryId, source, agentId, q.",
+    response: z.array(S.TaskListItemSchema),
+    handler: (ctx) => {
+      const q = ctx.query;
+      const text = (q.get("q") ?? "").toLowerCase();
+      return inOrg(ctx.db.tasks, ctx.orgId)
+        .filter((t) => (!q.get("status") || q.get("status")!.split(",").includes(t.status)) && (!q.get("projectId") || t.projectId === q.get("projectId")) && (!q.get("repositoryId") || t.repositoryId === q.get("repositoryId")) && (!q.get("source") || t.source === q.get("source")) && (!q.get("agentId") || t.agentId === q.get("agentId")) && (!text || t.title.toLowerCase().includes(text) || t.id.includes(text)))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map((t) => taskListItem(ctx.db, t));
+    },
+  },
+  {
+    method: "POST", path: "/tasks", auth: "task.create", summary: "Create a task (optionally launch it). Validates policy, agent and budget.",
+    request: S.NewTaskInputSchema, response: S.TaskSchema,
+    handler: (ctx) => createTask(ctx, ctx.body as S.NewTaskInput),
+  },
+  {
+    method: "GET", path: "/tasks/:id", auth: "member", summary: "Task detail: sessions, approvals, PR, verification runs, linked bug/finding, lifecycle, activity, policy preview.",
+    response: S.TaskDetailSchema,
+    handler: (ctx) => taskDetail(ctx, own(ctx, ctx.db.tasks, ctx.params.id, "Task")),
+  },
+  {
+    method: "POST", path: "/tasks/:id/actions", auth: "task.launch", summary: "launch | cancel | retry | archive. Enforces the task state machine, retry cap and budget hard cap.",
+    request: S.TaskActionInputSchema, response: S.TaskDetailSchema,
+    handler: (ctx) => {
+      const { db, now } = ctx;
+      const t = own(ctx, db.tasks, ctx.params.id, "Task");
+      const input = body(S.TaskActionInputSchema, ctx.body);
+      const attempts = db.sessions.filter((s) => s.taskId === t.id).length;
+      const o = org(ctx);
+      const check = checkTaskAction(input.action, { status: t.status, attempts, hasAgent: !!t.agentId, maxRetries: policy(ctx).maxFixRetries, budgetRemainingUsd: o.budget.hardCap ? budgetRemaining(db, ctx.orgId, now) : undefined });
+      if (!check.allowed) throw new HttpError(409, check.reason ?? "Not allowed");
+      const s = db.sessions.filter((x) => x.taskId === t.id).at(-1);
+      if (input.action === "launch" || input.action === "retry") startSession(db, t, person(ctx), { now, notes: input.notes, simulateFailure: input.simulateFailure });
+      if (input.action === "cancel") {
+        if (s && (s.status === "running" || s.status === "waiting")) endSession(db, s, "cancelled", "Cancelled by " + me(ctx).name, now);
+        t.status = "cancelled";
+        audit(db, ctx.orgId, person(ctx), "task.cancelled", `task:${t.id}`, "", now);
+      }
+      return taskDetail(ctx, t);
+    },
+  },
+  {
+    method: "GET", path: "/sessions", auth: "member", summary: "Agent sessions. ?status=",
+    response: z.array(S.SessionListItemSchema),
+    handler: (ctx) => inOrg(ctx.db.sessions, ctx.orgId).filter((s) => !ctx.query.get("status") || ctx.query.get("status")!.split(",").includes(s.status)).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).map((s) => sessionListItem(ctx.db, s)),
+  },
+  {
+    method: "GET", path: "/sessions/:id", auth: "member", summary: "Session detail with workspace, approvals and other attempts.",
+    response: S.SessionDetailSchema,
+    handler: (ctx) => {
+      const s = own(ctx, ctx.db.sessions, ctx.params.id, "Session");
+      return {
+        session: sessionListItem(ctx.db, s),
+        task: ctx.db.tasks.find((t) => t.id === s.taskId)!,
+        workspace: ctx.db.workspaces.find((w) => w.sessionId === s.id) ?? null,
+        approvals: ctx.db.approvals.filter((a) => a.context.sessionId === s.id),
+        otherAttempts: ctx.db.sessions.filter((x) => x.taskId === s.taskId && x.id !== s.id),
+      };
+    },
+  },
+  {
+    method: "GET", path: "/sessions/:id/log", auth: "member", summary: "Structured, secret-redacted session log (poll every ~1.2s while running).",
+    response: S.LiveLogSchema,
+    handler: (ctx) => generateLog(ctx.db, own(ctx, ctx.db.sessions, ctx.params.id, "Session"), ctx.now),
+  },
+  {
+    method: "GET", path: "/sessions/:id/diff", auth: "member", summary: "Changed files with hunks for the session's commit.",
+    response: z.array(S.DiffFileSchema),
+    handler: (ctx) => {
+      const s = own(ctx, ctx.db.sessions, ctx.params.id, "Session");
+      const t = ctx.db.tasks.find((x) => x.id === s.taskId)!;
+      return generateDiff(t, ctx.db.repositories.find((r) => r.id === t.repositoryId)!, s.changedFiles, true);
+    },
+  },
+  {
+    method: "POST", path: "/sessions/:id/cancel", auth: "task.cancel", summary: "Cancel an active session; the worker is terminated and the workspace cleaned up.",
+    response: S.SessionListItemSchema,
+    handler: (ctx) => {
+      const s = own(ctx, ctx.db.sessions, ctx.params.id, "Session");
+      if (s.status !== "running" && s.status !== "waiting") throw new HttpError(409, "Session is not active");
+      endSession(ctx.db, s, "cancelled", "Cancelled by " + me(ctx).name, ctx.now);
+      return sessionListItem(ctx.db, s);
+    },
+  },
+  {
+    method: "GET", path: "/workspaces", auth: "member", summary: "Isolated execution workspaces (one per session).",
+    response: z.array(S.WorkspaceSchema.extend({ taskTitle: z.string(), sessionStatus: S.SessionStatusSchema, repositoryName: z.string() })),
+    handler: (ctx) => inOrg(ctx.db.workspaces, ctx.orgId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((w) => {
+      const s = ctx.db.sessions.find((x) => x.id === w.sessionId)!;
+      const t = ctx.db.tasks.find((x) => x.id === s.taskId)!;
+      return { ...w, taskTitle: t.title, sessionStatus: s.status, repositoryName: ctx.db.repositories.find((r) => r.id === t.repositoryId)!.fullName };
+    }),
+  },
+  {
+    method: "GET", path: "/agents", auth: "member", summary: "Configured coding-agent runtimes.",
+    response: z.array(S.AgentSchema),
+    handler: (ctx) => inOrg(ctx.db.agents, ctx.orgId),
+  },
+  {
+    method: "POST", path: "/agents/:id", auth: "agent.manage", summary: "Update or suspend an agent runtime.",
+    request: z.object({ status: z.enum(["active", "suspended"]).optional(), maxConcurrent: z.number().int().min(1).max(50).optional(), defaultBudgetUsd: z.number().min(0).optional(), defaultTimeoutMin: z.number().min(5).optional() }),
+    response: S.AgentSchema,
+    handler: (ctx) => {
+      const a = own(ctx, ctx.db.agents, ctx.params.id, "Agent");
+      Object.assign(a, body(z.object({ status: z.enum(["active", "suspended"]).optional(), maxConcurrent: z.number().int().min(1).max(50).optional(), defaultBudgetUsd: z.number().min(0).optional(), defaultTimeoutMin: z.number().min(5).optional() }), ctx.body));
+      audit(ctx.db, ctx.orgId, person(ctx), "agent.updated", `agent:${a.id}`, a.status, ctx.now);
+      return a;
+    },
+  },
+
+  // ===== ShipSafe
+  {
+    method: "GET", path: "/shipsafe/overview", auth: "member", summary: "Testing dashboard: pass-rate trend, KPIs, failure classes, repositories, recent runs, open bugs.",
+    response: S.ShipSafeOverviewSchema,
+    handler: (ctx) => {
+      const { db, now, orgId } = ctx;
+      const runs = inOrg(db.testRuns, orgId);
+      const days = Array.from({ length: 30 }, (_, i) => toIso(now - (29 - i) * DAY).slice(0, 10));
+      const done7 = runs.filter((r) => Date.parse(r.startedAt) > now - 7 * DAY && (r.status === "passed" || r.status === "failed"));
+      const durations = runs.filter((r) => r.durationSec).map((r) => r.durationSec!).sort((a, b) => a - b);
+      const results = db.testResults.filter((r) => runs.some((x) => x.id === r.runId));
+      const classified = results.filter((r) => r.classification);
+      const prs30 = inOrg(db.pullRequests, orgId).filter((p) => Date.parse(p.openedAt) > now - 30 * DAY);
+      const bugs = inOrg(db.bugs, orgId);
+      const suites = inOrg(db.testSuites, orgId);
+      const classes: S.FailureClass[] = ["product_defect", "test_defect", "environment", "flaky", "infrastructure"];
+      return {
+        passRateTrend: days.map((d) => {
+          const rs = runs.filter((r) => r.startedAt.slice(0, 10) === d && (r.status === "passed" || r.status === "failed"));
+          return { date: d, passRatePct: rs.length ? pct(rs.filter((r) => r.status === "passed").length, rs.length) : 0, runs: rs.length };
+        }),
+        kpis: {
+          runs7d: runs.filter((r) => Date.parse(r.startedAt) > now - 7 * DAY).length,
+          passRatePct: pct(done7.filter((r) => r.status === "passed").length, done7.length),
+          medianDurationSec: durations.length ? durations[Math.floor(durations.length / 2)] : 0,
+          flakyRatePct: suites.length ? Math.round((suites.reduce((s, x) => s + x.flakyRatePct, 0) / suites.length) * 10) / 10 : 0,
+          openBugs: bugs.filter((b) => b.status === "open" || b.status === "fix_in_progress").length,
+          verificationCoveragePct: pct(prs30.filter((p) => p.latestRunId).length, prs30.length),
+          actionableDefectPct: pct(bugs.filter((b) => b.status !== "wont_fix").length, Math.max(1, classified.filter((r) => r.classification !== "flaky").length)),
+        },
+        failureBreakdown: classes.map((c) => ({ classification: c, count: classified.filter((r) => r.classification === c).length + (c === "infrastructure" ? runs.filter((r) => r.status === "errored").length : 0) })),
+        repositories: inOrg(db.repositories, orgId).map((r) => {
+          const rs = runs.filter((x) => x.repositoryId === r.id && (x.status === "passed" || x.status === "failed"));
+          const last = runs.filter((x) => x.repositoryId === r.id).sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+          return { repositoryId: r.id, name: r.fullName, passRatePct: pct(rs.filter((x) => x.status === "passed").length, rs.length), runs: rs.length, lastStatus: last?.status ?? null };
+        }),
+        recentRuns: runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 12).map((r) => runListItem(db, r)),
+        openBugs: bugs.filter((b) => b.status === "open" || b.status === "fix_in_progress").map((b) => bugListItem(db, b)),
+      };
+    },
+  },
+  {
+    method: "GET", path: "/test-suites", auth: "member", summary: "Test suites. ?repositoryId=",
+    response: z.array(S.TestSuiteSchema.extend({ repositoryName: z.string(), lastStatus: z.string().nullable() })),
+    handler: (ctx) => inOrg(ctx.db.testSuites, ctx.orgId).filter((s) => !ctx.query.get("repositoryId") || s.repositoryId === ctx.query.get("repositoryId")).map((s) => {
+      const last = ctx.db.testRuns.filter((r) => r.selectedSuites.some((x) => x.suiteId === s.id) && r.status !== "running").sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+      return { ...s, repositoryName: ctx.db.repositories.find((r) => r.id === s.repositoryId)!.fullName, lastStatus: last?.status ?? null };
+    }),
+  },
+  {
+    method: "POST", path: "/test-suites", auth: "suite.manage", summary: "Create a test suite.",
+    request: S.TestSuiteInputSchema, response: S.TestSuiteSchema,
+    handler: (ctx) => {
+      const input = body(S.TestSuiteInputSchema, ctx.body);
+      own(ctx, ctx.db.repositories, input.repositoryId, "Repository");
+      const s = { id: newId("suite"), orgId: ctx.orgId, ...input, owner: me(ctx).id, enabled: true, flakyRatePct: 0, testCount: 0 };
+      ctx.db.testSuites.push(s);
+      audit(ctx.db, ctx.orgId, person(ctx), "suite.created", `suite:${s.id}`, s.name, ctx.now);
+      return s;
+    },
+  },
+  {
+    method: "POST", path: "/test-suites/:id", auth: "suite.manage", summary: "Update a test suite (enable/disable, required, command, timeout).",
+    request: S.TestSuitePatchSchema, response: S.TestSuiteSchema,
+    handler: (ctx) => {
+      const s = own(ctx, ctx.db.testSuites, ctx.params.id, "Suite");
+      Object.assign(s, body(S.TestSuitePatchSchema, ctx.body));
+      return s;
+    },
+  },
+  {
+    method: "GET", path: "/test-runs", auth: "member", summary: "Test runs. ?repositoryId= &status= &pullRequestId= &trigger=",
+    response: z.array(S.TestRunListItemSchema),
+    handler: (ctx) => {
+      const q = ctx.query;
+      return inOrg(ctx.db.testRuns, ctx.orgId)
+        .filter((r) => (!q.get("repositoryId") || r.repositoryId === q.get("repositoryId")) && (!q.get("status") || r.status === q.get("status")) && (!q.get("pullRequestId") || r.pullRequestId === q.get("pullRequestId")) && (!q.get("trigger") || (q.get("trigger") === "pr" ? !!r.pullRequestId : !r.pullRequestId)))
+        .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+        .slice(0, 200)
+        .map((r) => runListItem(ctx.db, r));
+    },
+  },
+  {
+    method: "POST", path: "/test-runs", auth: "test.run", summary: "Start a manual test run on a branch.",
+    request: S.NewTestRunInputSchema, response: S.TestRunSchema,
+    handler: (ctx) => {
+      const input = body(S.NewTestRunInputSchema, ctx.body);
+      const repo = own(ctx, ctx.db.repositories, input.repositoryId, "Repository");
+      return startTestRun(ctx.db, repo, null, "manual", { now: ctx.now, branch: input.branch, simulateFailure: input.simulateFailure });
+    },
+  },
+  {
+    method: "GET", path: "/test-runs/:id", auth: "member", summary: "Run detail: environment, commit pins, test plan with reasons, results, evidence, comparison with the previous run, worker log.",
+    response: S.TestRunDetailSchema,
+    handler: (ctx) => {
+      const { db } = ctx;
+      const run = own(ctx, db.testRuns, ctx.params.id, "Test run");
+      const results = db.testResults.filter((r) => r.runId === run.id);
+      const suites = run.selectedSuites.map((x) => {
+        const s = db.testSuites.find((y) => y.id === x.suiteId)!;
+        const rs = results.filter((r) => r.suiteId === s.id);
+        return { ...s, reason: x.reason, passed: rs.filter((r) => r.outcome === "passed").length, failed: rs.filter((r) => r.outcome === "failed").length, flaky: rs.filter((r) => r.outcome === "flaky").length };
+      });
+      const previous = run.retestOf ? db.testRuns.find((r) => r.id === run.retestOf) ?? null : run.pullRequestId ? db.testRuns.filter((r) => r.pullRequestId === run.pullRequestId && r.startedAt < run.startedAt).sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] ?? null : null;
+      let comparison = null;
+      if (previous) {
+        const failedNow = new Set(results.filter((r) => r.outcome === "failed").map((r) => r.name));
+        const failedBefore = new Set(db.testResults.filter((r) => r.runId === previous.id && r.outcome === "failed").map((r) => r.name));
+        comparison = { newlyFailing: [...failedNow].filter((n) => !failedBefore.has(n)), fixed: [...failedBefore].filter((n) => !failedNow.has(n)), stillFailing: [...failedNow].filter((n) => failedBefore.has(n)) };
+      }
+      return {
+        run: runListItem(db, run),
+        repository: db.repositories.find((r) => r.id === run.repositoryId)!,
+        pullRequest: run.pullRequestId ? db.pullRequests.find((p) => p.id === run.pullRequestId) ?? null : null,
+        suites,
+        results: results.map((r) => ({ ...r, suiteName: db.testSuites.find((s) => s.id === r.suiteId)?.name ?? "" })),
+        previous,
+        comparison,
+        bugs: db.bugs.filter((b) => b.runId === run.id),
+        workerLog: workerLog(run, suites.map((s) => s.name)),
+      };
+    },
+  },
+  {
+    method: "POST", path: "/test-runs/:id/rerun", auth: "test.run", summary: "Rerun with the same commit pin (infra failures rerun free).",
+    response: S.TestRunSchema,
+    handler: (ctx) => {
+      const run = own(ctx, ctx.db.testRuns, ctx.params.id, "Test run");
+      const repo = ctx.db.repositories.find((r) => r.id === run.repositoryId)!;
+      const pr = run.pullRequestId ? ctx.db.pullRequests.find((p) => p.id === run.pullRequestId) ?? null : null;
+      return startTestRun(ctx.db, repo, pr, "rerun", { now: ctx.now, retestOf: run.id, branch: run.branch });
+    },
+  },
+  {
+    method: "GET", path: "/bugs", auth: "member", summary: "Bugs from ShipSafe failures. ?status= &severity=",
+    response: z.array(S.BugListItemSchema),
+    handler: (ctx) => inOrg(ctx.db.bugs, ctx.orgId).filter((b) => (!ctx.query.get("status") || b.status === ctx.query.get("status")) && (!ctx.query.get("severity") || b.severity === ctx.query.get("severity"))).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((b) => bugListItem(ctx.db, b)),
+  },
+  {
+    method: "GET", path: "/bugs/:id", auth: "member", summary: "Bug detail with the failing result, evidence, run, PR and fix task.",
+    response: S.BugDetailSchema,
+    handler: (ctx) => {
+      const b = own(ctx, ctx.db.bugs, ctx.params.id, "Bug");
+      return {
+        bug: bugListItem(ctx.db, b),
+        result: ctx.db.testResults.find((r) => r.id === b.resultId)!,
+        run: ctx.db.testRuns.find((r) => r.id === b.runId)!,
+        pullRequest: b.pullRequestId ? ctx.db.pullRequests.find((p) => p.id === b.pullRequestId) ?? null : null,
+        task: b.taskId ? ctx.db.tasks.find((t) => t.id === b.taskId) ?? null : null,
+        repository: ctx.db.repositories.find((r) => r.id === b.repositoryId)!,
+      };
+    },
+  },
+  {
+    method: "POST", path: "/bugs/:id/actions", auth: "bug.manage", summary: "create_fix_task (SS-012: preserves commit, logs and context; capped retries) | resolve | wont_fix | reopen.",
+    request: S.BugActionInputSchema, response: S.BugDetailSchema,
+    handler: (ctx) => {
+      const { db, now } = ctx;
+      const b = own(ctx, db.bugs, ctx.params.id, "Bug");
+      const input = body(S.BugActionInputSchema, ctx.body);
+      if (input.action === "create_fix_task") {
+        const prior = db.tasks.filter((t) => t.bugId === b.id).length;
+        if (prior >= policy(ctx).maxFixRetries) throw new HttpError(409, `This bug already had ${prior} fix attempts (limit ${policy(ctx).maxFixRetries}). Escalate to a human.`);
+        const result = db.testResults.find((r) => r.id === b.resultId)!;
+        const parent = b.pullRequestId ? db.tasks.find((t) => t.pullRequestId === b.pullRequestId && t.id !== b.taskId) : undefined;
+        const agentId = input.agentId ?? inOrg(db.agents, ctx.orgId).find((a) => a.status === "active")?.id;
+        if (!agentId) throw new HttpError(409, "No active agent runtime. Connect one in Integrations.");
+        const task = createTask(ctx, {
+          repositoryId: b.repositoryId,
+          title: `Fix: ${b.title}`,
+          description: `ShipSafe found a product defect on ${b.commitSha.slice(0, 7)}. Failing test: ${result.name}. Error: ${result.error}. Suspected cause: ${b.suspectedCause}`,
+          acceptanceCriteria: [`\`${result.name}\` passes`, "No other ShipSafe checks regress", "Regression test kept in the suite"],
+          constraints: ["Push to the existing PR branch", "Do not modify unrelated files"],
+          priority: b.severity === "critical" ? "urgent" : "high",
+          agentId,
+          targetBranch: "main",
+          budgetUsd: 5,
+          timeoutMin: 30,
+          launch: true,
+          source: "shipsafe_failure",
+          bugId: b.id,
+          parentTaskId: parent?.id ?? null,
+        });
+        task.pullRequestId = b.pullRequestId;
+        b.taskId = task.id;
+        b.status = "fix_in_progress";
+        audit(db, ctx.orgId, person(ctx), "bug.fix_task_created", `bug:${b.id}`, task.id, now);
+      } else {
+        b.status = input.action === "resolve" ? "resolved" : input.action === "wont_fix" ? "wont_fix" : "open";
+        audit(db, ctx.orgId, person(ctx), `bug.${input.action}`, `bug:${b.id}`, input.comment ?? "", now);
+      }
+      return routes.find((r) => r.path === "/bugs/:id")!.handler(ctx);
+    },
+  },
+
+  // ===== pull requests
+  {
+    method: "GET", path: "/pull-requests", auth: "member", summary: "Pull requests (agent and human) with verification status. ?status= &author=agent|person &repositoryId= &filter=review",
+    response: z.array(S.PullRequestListItemSchema),
+    handler: (ctx) => {
+      const q = ctx.query;
+      return inOrg(ctx.db.pullRequests, ctx.orgId)
+        .filter((p) => (!q.get("status") || p.status === q.get("status")) && (!q.get("author") || p.author.type === q.get("author")) && (!q.get("repositoryId") || p.repositoryId === q.get("repositoryId")) && (q.get("filter") !== "review" || (p.status === "open" && p.checkStatus === "passed")))
+        .sort((a, b) => b.openedAt.localeCompare(a.openedAt))
+        .map((p) => prListItem(ctx.db, p));
+    },
+  },
+  {
+    method: "GET", path: "/pull-requests/:id", auth: "member", summary: "PR verification detail: runs, results, bugs, release policy and merge blockers.",
+    response: S.PullRequestDetailSchema,
+    handler: (ctx) => prDetail(ctx, ctx.params.id),
+  },
+  {
+    method: "GET", path: "/pull-requests/:id/diff", auth: "member", summary: "Diff for the PR head.",
+    response: z.array(S.DiffFileSchema),
+    handler: (ctx) => {
+      const pr = own(ctx, ctx.db.pullRequests, ctx.params.id, "Pull request");
+      const repo = ctx.db.repositories.find((r) => r.id === pr.repositoryId)!;
+      const task = pr.taskId ? ctx.db.tasks.find((t) => t.id === pr.taskId) : undefined;
+      const files = ctx.db.sessions.find((s) => s.id === pr.author.sessionId)?.changedFiles ?? [
+        { path: repo.ecosystems[0] === "pypi" ? "app/api/handlers.py" : "src/components/Feature.tsx", additions: Math.round(pr.additions * 0.6), deletions: pr.deletions },
+        { path: repo.ecosystems[0] === "pypi" ? "tests/api/test_handlers.py" : "src/components/Feature.test.tsx", additions: Math.round(pr.additions * 0.4), deletions: 0 },
+      ];
+      return generateDiff(task ?? { title: pr.title, acceptanceCriteria: [pr.title] }, repo, files, pr.author.type === "agent");
+    },
+  },
+  {
+    method: "POST", path: "/pull-requests/:id/review", auth: "pr.review", summary: "Record a human review (mirrors the GitHub review).",
+    request: S.ReviewInputSchema, response: S.PullRequestDetailSchema,
+    handler: (ctx) => {
+      const pr = own(ctx, ctx.db.pullRequests, ctx.params.id, "Pull request");
+      const input = body(S.ReviewInputSchema, ctx.body);
+      pr.reviewState = input.decision;
+      if (!pr.reviewers.includes(me(ctx).id)) pr.reviewers.push(me(ctx).id);
+      audit(ctx.db, ctx.orgId, person(ctx), "pull_request.reviewed", `pr:${pr.id}`, input.decision.replace("_", " "), ctx.now);
+      return prDetail(ctx, pr.id);
+    },
+  },
+  {
+    method: "POST", path: "/pull-requests/:id/merge", auth: "pr.review", summary: "Demo only: simulate the GitHub merge webhook. Refused while required checks or review are missing.",
+    response: S.PullRequestDetailSchema,
+    handler: (ctx) => {
+      const detail = prDetail(ctx, ctx.params.id);
+      if (!detail.mergeable) throw new HttpError(409, `Not mergeable: ${detail.mergeBlockers.join("; ")}`);
+      applyMerge(ctx.db, ctx.db.pullRequests.find((p) => p.id === ctx.params.id)!, me(ctx).id, ctx.now);
+      return prDetail(ctx, ctx.params.id);
+    },
+  },
+
+  // ===== CodeKeeper
+  {
+    method: "GET", path: "/codekeeper/overview", auth: "member", summary: "Repository health: average and trend, per-repository scores, findings breakdown, scans, maintenance PR acceptance, prioritised queue.",
+    response: S.CodeKeeperOverviewSchema,
+    handler: (ctx) => {
+      const { db, orgId } = ctx;
+      const repos = inOrg(db.repositories, orgId);
+      const findings = inOrg(db.findings, orgId);
+      const open = findings.filter((f) => f.status === "open" || f.status === "task_created");
+      const weeks = [...new Set(db.healthHistory.filter((h) => repos.some((r) => r.id === h.repositoryId)).map((h) => h.weekStart))].sort().slice(-12);
+      const count = (key: "severity" | "category") => open.reduce<Record<string, number>>((acc, f) => ((acc[f[key]] = (acc[f[key]] ?? 0) + 1), acc), {});
+      const maintTasks = inOrg(db.tasks, orgId).filter((t) => t.source === "codekeeper_finding");
+      const maintPrs = maintTasks.map((t) => db.pullRequests.find((p) => p.id === t.pullRequestId)).filter(Boolean);
+      const rank = { urgent: 0, high: 1, medium: 2, low: 3 };
+      return {
+        avgHealth: repos.length ? Math.round(repos.reduce((s, r) => s + r.health.score, 0) / repos.length) : null,
+        healthTrend: weeks.map((w) => {
+          const hs = db.healthHistory.filter((h) => h.weekStart === w && repos.some((r) => r.id === h.repositoryId));
+          return { date: w, value: Math.round(hs.reduce((s, h) => s + h.score, 0) / Math.max(1, hs.length)) };
+        }),
+        repositories: repos.map((r) => repositorySummary(db, r.id)),
+        findingsBySeverity: count("severity"),
+        findingsByCategory: count("category"),
+        recentScans: inOrg(db.scans, orgId).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 8).map((s) => ({ ...s, repositoryName: db.repositories.find((r) => r.id === s.repositoryId)!.fullName })),
+        maintenance: { prsCreated: maintPrs.length, prsMerged: maintPrs.filter((p) => p!.status === "merged").length, acceptancePct: pct(maintPrs.filter((p) => p!.status === "merged").length, maintPrs.length), inProgress: maintTasks.filter((t) => !["completed", "failed", "cancelled"].includes(t.status)).length },
+        queue: open.filter((f) => f.status === "open").sort((a, b) => rank[a.riskBand] - rank[b.riskBand]).slice(0, 10).map((f) => findingListItem(db, f)),
+      };
+    },
+  },
+  {
+    method: "GET", path: "/dependencies", auth: "member", summary: "Dependency inventory. ?repositoryId= &q= &filter=outdated|vulnerable",
+    response: z.array(S.DependencySchema.extend({ repositoryName: z.string(), outdated: z.boolean(), vulnerable: z.boolean(), majorBehind: z.boolean() })),
+    handler: (ctx) => {
+      const q = (ctx.query.get("q") ?? "").toLowerCase();
+      const f = ctx.query.get("filter");
+      return inOrg(ctx.db.dependencies, ctx.orgId)
+        .filter((d) => !ctx.query.get("repositoryId") || d.repositoryId === ctx.query.get("repositoryId"))
+        .filter((d) => !q || d.name.toLowerCase().includes(q))
+        .map((d) => ({
+          ...d,
+          repositoryName: ctx.db.repositories.find((r) => r.id === d.repositoryId)!.fullName,
+          outdated: d.installedVersion !== d.latestVersion,
+          majorBehind: d.installedVersion.split(".")[0] !== d.latestVersion.split(".")[0],
+          vulnerable: ctx.db.findings.some((x) => x.dependencyId === d.id && x.category === "vulnerability" && x.status !== "resolved"),
+        }))
+        .filter((d) => !f || (f === "outdated" ? d.outdated : d.vulnerable));
+    },
+  },
+  {
+    method: "GET", path: "/findings", auth: "member", summary: "Maintenance findings. ?status= &severity= &category= &repositoryId=",
+    response: z.array(S.FindingListItemSchema),
+    handler: (ctx) => {
+      const q = ctx.query;
+      const rank = { urgent: 0, high: 1, medium: 2, low: 3 };
+      return inOrg(ctx.db.findings, ctx.orgId)
+        .filter((f) => (!q.get("status") || q.get("status")!.split(",").includes(f.status)) && (!q.get("severity") || f.severity === q.get("severity")) && (!q.get("category") || f.category === q.get("category")) && (!q.get("repositoryId") || f.repositoryId === q.get("repositoryId")))
+        .sort((a, b) => rank[a.riskBand] - rank[b.riskBand] || b.detectedAt.localeCompare(a.detectedAt))
+        .map((f) => findingListItem(ctx.db, f));
+    },
+  },
+  {
+    method: "GET", path: "/findings/:id", auth: "member", summary: "Finding detail with advisory evidence, dependency and linked task.",
+    response: S.FindingDetailSchema,
+    handler: (ctx) => {
+      const f = own(ctx, ctx.db.findings, ctx.params.id, "Finding");
+      const t = f.taskId ? ctx.db.tasks.find((x) => x.id === f.taskId) : undefined;
+      return {
+        finding: findingListItem(ctx.db, f),
+        dependency: f.dependencyId ? ctx.db.dependencies.find((d) => d.id === f.dependencyId) ?? null : null,
+        repository: ctx.db.repositories.find((r) => r.id === f.repositoryId)!,
+        task: t ? taskListItem(ctx.db, t) : null,
+        similar: inOrg(ctx.db.findings, ctx.orgId).filter((x) => x.id !== f.id && x.package && x.package === f.package).map((x) => findingListItem(ctx.db, x)),
+      };
+    },
+  },
+  {
+    method: "POST", path: "/findings/:id/actions", auth: "finding.create_task", summary: "create_task (policy-validated DevPilot maintenance task) | suppress (reason + expiry, admins) | unsuppress.",
+    request: S.FindingActionInputSchema, response: S.FindingDetailSchema,
+    handler: (ctx) => {
+      const { db, now } = ctx;
+      const f = own(ctx, db.findings, ctx.params.id, "Finding");
+      const input = body(S.FindingActionInputSchema, ctx.body);
+      if (input.action === "create_task") {
+        if (f.taskId) throw new HttpError(409, "A maintenance task already exists for this finding");
+        const agentId = input.agentId ?? inOrg(db.agents, ctx.orgId).find((a) => a.status === "active")?.id;
+        if (!agentId) throw new HttpError(409, "No active agent runtime");
+        const task = createTask(ctx, {
+          repositoryId: f.repositoryId,
+          title: f.package && f.fixedVersion ? `Upgrade ${f.package} to ${f.fixedVersion}` : `Maintenance: ${f.title}`,
+          description: `CodeKeeper finding ${f.id}${f.advisoryId ? ` (${f.advisoryId}, ${f.advisorySource})` : ""}: ${f.title}. Evidence: ${f.evidence}`,
+          acceptanceCriteria: f.package && f.fixedVersion ? [`${f.package} ≥ ${f.fixedVersion}`, "All ShipSafe checks pass", "Rollback notes in the PR description"] : ["Finding no longer detected on rescan", "All ShipSafe checks pass"],
+          constraints: ["Change only what the finding requires"],
+          priority: f.riskBand === "urgent" ? "urgent" : f.riskBand === "high" ? "high" : "medium",
+          agentId,
+          targetBranch: "main",
+          budgetUsd: 4,
+          timeoutMin: 30,
+          launch: true,
+          source: "codekeeper_finding",
+          findingId: f.id,
+        });
+        f.taskId = task.id;
+        f.status = "task_created";
+        audit(db, ctx.orgId, person(ctx), "finding.task_created", `finding:${f.id}`, task.id, now);
+      } else if (input.action === "suppress") {
+        require(ctx, "finding.suppress");
+        const max = policy(ctx).suppressionMaxDays;
+        if (input.expiresInDays > max) throw new HttpError(422, `Suppressions can last at most ${max} days by policy`);
+        f.status = "suppressed";
+        f.suppression = { reason: input.reason, by: me(ctx).id, at: toIso(now), expiresAt: toIso(now + input.expiresInDays * DAY) };
+        audit(db, ctx.orgId, person(ctx), "finding.suppressed", `finding:${f.id}`, input.reason, now);
+      } else {
+        require(ctx, "finding.suppress");
+        f.status = "open";
+        f.suppression = null;
+      }
+      return routes.find((r) => r.path === "/findings/:id")!.handler(ctx);
+    },
+  },
+
+  // ===== approvals
+  {
+    method: "GET", path: "/approvals", auth: "member", summary: "Approval centre. ?status=",
+    response: z.array(S.ApprovalSchema.extend({ requesterResolved: S.ResolvedActorSchema, taskTitle: z.string().nullable(), canDecide: z.boolean() })),
+    handler: (ctx) => inOrg(ctx.db.approvals, ctx.orgId)
+      .filter((a) => !ctx.query.get("status") || a.status === ctx.query.get("status"))
+      .sort((a, b) => (a.status === "pending" ? -1 : 0) - (b.status === "pending" ? -1 : 0) || b.requestedAt.localeCompare(a.requestedAt))
+      .map((a) => ({
+        ...a,
+        requesterResolved: activity(ctx.db, [{ id: "x", orgId: a.orgId, actor: { type: a.requestedBy.type, id: a.requestedBy.id }, action: "", resource: "", at: a.requestedAt, detail: "", ip: null }])[0].actorResolved,
+        taskTitle: typeof a.context.taskId === "string" ? ctx.db.tasks.find((t) => t.id === a.context.taskId)?.title ?? null : null,
+        canDecide: a.status === "pending" && meetsRole(ctx.role, a.approverRole) && !(a.requestedBy.type === "person" && a.requestedBy.id === me(ctx).id),
+      })),
+  },
+  {
+    method: "POST", path: "/approvals/:id/decision", auth: "approval.decide", summary: "Approve or reject. Bound to the exact action and context; requester can't approve their own request.",
+    request: S.ApprovalDecisionInputSchema, response: S.ApprovalSchema,
+    handler: (ctx) => {
+      const { db, now } = ctx;
+      const a = own(ctx, db.approvals, ctx.params.id, "Approval");
+      if (a.status !== "pending") throw new HttpError(409, "This request was already decided");
+      if (Date.parse(a.expiresAt) < now) {
+        a.status = "expired";
+        throw new HttpError(409, "This request expired");
+      }
+      if (!meetsRole(ctx.role, a.approverRole)) throw new HttpError(403, `Needs ${a.approverRole} or above`);
+      if (a.requestedBy.type === "person" && a.requestedBy.id === me(ctx).id) throw new HttpError(403, "You can't approve your own request");
+      const input = body(S.ApprovalDecisionInputSchema, ctx.body);
+      a.status = input.decision;
+      a.decidedBy = me(ctx).id;
+      a.decidedAt = toIso(now);
+      a.comment = input.comment || null;
+      audit(db, ctx.orgId, person(ctx), `approval.${input.decision}`, `approval:${a.id}`, a.title, now);
+      const s = typeof a.context.sessionId === "string" ? db.sessions.find((x) => x.id === a.context.sessionId) : undefined;
+      if (s && s.status === "waiting") {
+        if (input.decision === "approved") resumeSession(db, s, now);
+        else endSession(db, s, "failed", `Stopped: ${me(ctx).name} rejected "${a.title}"${input.comment ? ` — ${input.comment}` : ""}`, now);
+      }
+      if (a.action === "budget_increase" && input.decision === "approved") {
+        const o = org(ctx);
+        o.budget.monthlyLimitUsd = Number(a.context.requestedUsd ?? o.budget.monthlyLimitUsd);
+      }
+      return a;
+    },
+  },
+  {
+    method: "POST", path: "/sessions/:id/input", auth: "task.launch", summary: "Answer an agent's clarification question and resume the session.",
+    request: S.SessionInputSchema, response: S.SessionListItemSchema,
+    handler: (ctx) => {
+      const s = own(ctx, ctx.db.sessions, ctx.params.id, "Session");
+      if (s.status !== "waiting" || s.waitingFor?.kind !== "clarification") throw new HttpError(409, "The session isn't waiting for an answer");
+      const { answer } = body(S.SessionInputSchema, ctx.body);
+      s.notes = `${s.notes ? s.notes + " · " : ""}Answer: ${answer}`;
+      resumeSession(ctx.db, s, ctx.now);
+      return sessionListItem(ctx.db, s);
+    },
+  },
+
+  // ===== analytics
+  {
+    method: "GET", path: "/analytics", auth: "member", summary: "Analytics (30/90 days): North Star, task success by type, providers (task-mix caveat), PR acceptance, test usefulness, cost per verified task.",
+    response: S.AnalyticsSchema,
+    handler: (ctx) => {
+      const { db, now, orgId } = ctx;
+      const range = Number(ctx.query.get("range") ?? 30) === 90 ? 90 : 30;
+      const from = now - range * DAY;
+      const tasks = inOrg(db.tasks, orgId).filter((t) => Date.parse(t.createdAt) > from);
+      const sessions = inOrg(db.sessions, orgId).filter((s) => Date.parse(s.startedAt) > from);
+      const cat = (t: Task) => (t.source === "shipsafe_failure" ? "Bug fix" : t.source === "codekeeper_finding" ? "Maintenance" : /test/i.test(t.title) ? "Tests" : /fix/i.test(t.title) ? "Bug fix" : "Feature");
+      const cats = [...new Set(tasks.map(cat))];
+      const prs = inOrg(db.pullRequests, orgId).filter((p) => Date.parse(p.openedAt) > from);
+      const closed = (type: "agent" | "person") => prs.filter((p) => p.author.type === type && p.status !== "open");
+      const results = db.testResults.filter((r) => inOrg(db.testRuns, orgId).some((x) => x.id === r.runId) && r.classification && r.classification !== "flaky");
+      const bugs = inOrg(db.bugs, orgId);
+      const verified = verifiedTasks(db, orgId, from, now + 1);
+      const verifyDur = inOrg(db.testRuns, orgId).filter((r) => r.pullRequestId && r.durationSec).map((r) => r.durationSec! / 60).sort((a, b) => a - b);
+      const days = Array.from({ length: range }, (_, i) => toIso(now - (range - 1 - i) * DAY).slice(0, 10));
+      const providers = [...new Set(inOrg(db.agents, orgId).map((a) => a.provider))];
+      return {
+        rangeDays: range,
+        northStar: Array.from({ length: Math.round(range / 7) }, (_, i) => {
+          const end = now - (Math.round(range / 7) - 1 - i) * 7 * DAY;
+          return { date: toIso(end).slice(0, 10), value: verifiedTasks(db, orgId, end - 7 * DAY, end + 1).length };
+        }),
+        taskSuccessByType: cats.map((c) => {
+          const ts = tasks.filter((t) => cat(t) === c);
+          const ended = ts.filter((t) => ["review_ready", "completed", "failed"].includes(t.status));
+          const ss = sessions.filter((s) => ts.some((t) => t.id === s.taskId));
+          return { category: c, tasks: ts.length, successPct: pct(ended.filter((t) => t.status !== "failed").length, ended.length), avgCostUsd: ss.length ? Math.round((ss.reduce((s, x) => s + x.costUsd, 0) / Math.max(1, ts.length)) * 100) / 100 : 0, reworkPct: pct(ts.filter((t) => db.sessions.filter((s) => s.taskId === t.id).length > 1 || db.tasks.some((x) => x.parentTaskId === t.id)).length, ts.length) };
+        }),
+        providers: providers.map((p) => {
+          const ss = sessions.filter((s) => db.agents.find((a) => a.id === s.agentId)?.provider === p);
+          const ended = ss.filter((s) => s.endedAt);
+          return { provider: p, sessions: ss.length, successPct: pct(ended.filter((s) => s.status === "completed").length, ended.length), avgMinutes: ended.length ? Math.round(ended.reduce((s, x) => s + (Date.parse(x.endedAt!) - Date.parse(x.startedAt)) / 60_000, 0) / ended.length) : 0, costUsd: Math.round(ss.reduce((s, x) => s + x.costUsd, 0) * 100) / 100, humanInterventions: db.approvals.filter((a) => ss.some((s) => s.id === a.context.sessionId)).length };
+        }),
+        prAcceptance: { agentPct: pct(closed("agent").filter((p) => p.status === "merged").length, closed("agent").length), humanPct: pct(closed("person").filter((p) => p.status === "merged").length, closed("person").length), agentMerged: closed("agent").filter((p) => p.status === "merged").length, humanMerged: closed("person").filter((p) => p.status === "merged").length },
+        testUsefulness: { actionablePct: pct(bugs.filter((b) => b.status !== "wont_fix").length, Math.max(1, results.length)), reported: results.length, falsePositive: bugs.filter((b) => b.status === "wont_fix").length },
+        timeToVerifyMinP50: verifyDur.length ? Math.round(verifyDur[Math.floor(verifyDur.length / 2)] * 10) / 10 : 0,
+        costPerVerifiedTaskUsd: verified.length ? Math.round((spendBetween(db, orgId, from, now + DAY) / verified.length) * 100) / 100 : 0,
+        spendByDay: days.map((d) => {
+          const us = inOrg(db.usageRecords, orgId).filter((u) => u.date === d);
+          return { date: d, agentUsd: Math.round(us.filter((u) => u.meter === "agent_minutes").reduce((s, u) => s + u.costUsd, 0) * 100) / 100, browserUsd: Math.round(us.filter((u) => u.meter === "browser_minutes").reduce((s, u) => s + u.costUsd, 0) * 100) / 100 };
+        }),
+      };
+    },
+  },
+
+  // ===== integrations
+  {
+    method: "GET", path: "/integrations", auth: "member", summary: "Integration catalogue merged with this workspace's connections.",
+    response: z.array(S.IntegrationViewSchema),
+    handler: (ctx) => INTEGRATION_PROVIDERS.map((p) => ({ providerId: p.id, name: p.name, category: p.category, description: p.description, availability: p.availability, scopes: p.scopes, monogram: p.monogram, connection: ctx.db.integrations.find((i) => i.orgId === ctx.orgId && i.providerId === p.id) ?? null })),
+  },
+  {
+    method: "POST", path: "/integrations/:providerId/connect", auth: "integration.manage", summary: "Connect (mock OAuth / API key) an integration. Credentials live in the vault; only a reference is stored.",
+    request: S.ConnectIntegrationInputSchema, response: S.IntegrationSchema,
+    handler: (ctx) => {
+      const p = providerById(ctx.params.providerId);
+      if (!p) throw new HttpError(404, "Unknown integration");
+      if (p.availability === "coming_soon") throw new HttpError(409, `${p.name} is coming soon`);
+      if (p.availability === "enterprise" && org(ctx).plan !== "enterprise") throw new HttpError(402, `${p.name} requires the Enterprise plan`);
+      const { account } = body(S.ConnectIntegrationInputSchema, ctx.body);
+      let i = ctx.db.integrations.find((x) => x.orgId === ctx.orgId && x.providerId === p.id);
+      if (!i) {
+        i = { id: newId("int"), orgId: ctx.orgId, providerId: p.id, status: "connected", account, connectedAt: toIso(ctx.now), scopes: p.scopes };
+        ctx.db.integrations.push(i);
+      } else Object.assign(i, { status: "connected", account, connectedAt: toIso(ctx.now), error: undefined });
+      if ((p.id === "claude_code" || p.id === "openai_codex") && !inOrg(ctx.db.agents, ctx.orgId).some((a) => a.provider === p.id)) {
+        ctx.db.agents.push({ id: newId("agent"), orgId: ctx.orgId, provider: p.id, name: p.name, model: p.id === "claude_code" ? "claude-sonnet" : "codex", status: "active", maxConcurrent: 2, defaultTimeoutMin: 45, defaultBudgetUsd: 6 });
+        const pol = policy(ctx);
+        if (!pol.allowedProviders.includes(p.id)) pol.allowedProviders.push(p.id);
+      }
+      audit(ctx.db, ctx.orgId, person(ctx), "integration.connected", `integration:${p.id}`, account, ctx.now);
+      return i;
+    },
+  },
+  {
+    method: "POST", path: "/integrations/:providerId/disconnect", auth: "integration.manage", summary: "Disconnect and revoke an integration.",
+    response: S.OkSchema,
+    handler: (ctx) => {
+      const i = ctx.db.integrations.find((x) => x.orgId === ctx.orgId && x.providerId === ctx.params.providerId);
+      if (i) Object.assign(i, { status: "disconnected", connectedAt: null, error: undefined });
+      ctx.db.agents.filter((a) => a.orgId === ctx.orgId && a.provider === ctx.params.providerId).forEach((a) => (a.status = "suspended"));
+      audit(ctx.db, ctx.orgId, person(ctx), "integration.disconnected", `integration:${ctx.params.providerId}`, "", ctx.now);
+      return { ok: true };
+    },
+  },
+
+  // ===== settings: workspace, members, policy, api keys, audit
+  {
+    method: "POST", path: "/workspace", auth: "workspace.manage", summary: "Rename the workspace.",
+    request: S.WorkspacePatchSchema, response: S.OrganizationSchema,
+    handler: (ctx) => Object.assign(org(ctx), body(S.WorkspacePatchSchema, ctx.body)),
+  },
+  {
+    method: "GET", path: "/members", auth: "member", summary: "Members, pending invitations and seats.",
+    response: S.MembersSchema,
+    handler: (ctx) => ({
+      members: ctx.db.memberships.filter((m) => m.orgId === ctx.orgId).map((m) => {
+        const u = ctx.db.users.find((x) => x.id === m.userId)!;
+        const last = ctx.db.auditLogs.find((l) => l.orgId === ctx.orgId && l.actor.type === "person" && l.actor.id === u.id);
+        return { ...u, role: m.role, joinedAt: m.joinedAt, lastActiveAt: last?.at ?? null };
+      }),
+      invitations: inOrg(ctx.db.invitations, ctx.orgId).filter((i) => i.status === "pending"),
+      seatsPurchased: org(ctx).seatsPurchased,
+      seatsIncluded: planById(org(ctx).plan).limits.seats,
+    }),
+  },
+  {
+    method: "POST", path: "/members/invite", auth: "member.manage", summary: "Invite a member (respects the plan's seat limit).",
+    request: S.InviteInputSchema, response: S.InvitationSchema,
+    handler: (ctx) => {
+      const input = body(S.InviteInputSchema, ctx.body);
+      const seats = planById(org(ctx).plan).limits.seats;
+      const used = ctx.db.memberships.filter((m) => m.orgId === ctx.orgId).length + inOrg(ctx.db.invitations, ctx.orgId).filter((i) => i.status === "pending").length;
+      if (seats !== null && used >= seats) throw new HttpError(402, `All ${seats} seats are in use. Upgrade to add members.`);
+      if (ctx.db.memberships.some((m) => m.orgId === ctx.orgId && ctx.db.users.find((u) => u.id === m.userId)?.email === input.email) || inOrg(ctx.db.invitations, ctx.orgId).some((i) => i.email === input.email && i.status === "pending"))
+        throw new HttpError(409, "That person is already a member or invited");
+      const inv = { id: newId("inv"), orgId: ctx.orgId, email: input.email, role: input.role, invitedBy: me(ctx).id, sentAt: toIso(ctx.now), status: "pending" as const };
+      ctx.db.invitations.push(inv);
+      audit(ctx.db, ctx.orgId, person(ctx), "member.invited", `invitation:${inv.id}`, `${input.email} as ${input.role}`, ctx.now);
+      return inv;
+    },
+  },
+  {
+    method: "POST", path: "/invitations/:id/revoke", auth: "member.manage", summary: "Revoke a pending invitation.",
+    response: S.OkSchema,
+    handler: (ctx) => {
+      own(ctx, ctx.db.invitations, ctx.params.id, "Invitation").status = "revoked";
+      return { ok: true };
+    },
+  },
+  {
+    method: "POST", path: "/members/:userId/role", auth: "member.manage", summary: "Change a member's role. Only owners can grant or remove owner; the last owner can't be demoted.",
+    request: S.RoleChangeInputSchema, response: S.OkSchema,
+    handler: (ctx) => {
+      const { role } = body(S.RoleChangeInputSchema, ctx.body);
+      const m = ctx.db.memberships.find((x) => x.orgId === ctx.orgId && x.userId === ctx.params.userId);
+      if (!m) throw new HttpError(404, "Member not found");
+      if ((role === "owner" || m.role === "owner") && ctx.role !== "owner") throw new HttpError(403, "Only owners can change owner roles");
+      if (m.role === "owner" && role !== "owner" && ctx.db.memberships.filter((x) => x.orgId === ctx.orgId && x.role === "owner").length === 1) throw new HttpError(409, "A workspace needs at least one owner");
+      m.role = role;
+      audit(ctx.db, ctx.orgId, person(ctx), "member.role_changed", `user:${m.userId}`, role, ctx.now);
+      return { ok: true };
+    },
+  },
+  {
+    method: "POST", path: "/members/:userId/remove", auth: "member.manage", summary: "Remove a member from the workspace.",
+    response: S.OkSchema,
+    handler: (ctx) => {
+      const m = ctx.db.memberships.find((x) => x.orgId === ctx.orgId && x.userId === ctx.params.userId);
+      if (!m) throw new HttpError(404, "Member not found");
+      if (m.role === "owner") throw new HttpError(409, "Transfer ownership before removing an owner");
+      if (m.userId === me(ctx).id) throw new HttpError(409, "You can't remove yourself");
+      ctx.db.memberships = ctx.db.memberships.filter((x) => x !== m);
+      audit(ctx.db, ctx.orgId, person(ctx), "member.removed", `user:${m.userId}`, "", ctx.now);
+      return { ok: true };
+    },
+  },
+  {
+    method: "GET", path: "/policy", auth: "member", summary: "Workspace policies: providers, protected paths, network, required checks, approval rules, retention.",
+    response: S.PolicySchema,
+    handler: (ctx) => policy(ctx),
+  },
+  {
+    method: "POST", path: "/policy", auth: "policy.manage", summary: "Update workspace policies (Team plan and above).",
+    request: S.PolicyPatchSchema, response: S.PolicySchema,
+    handler: (ctx) => {
+      const p = policy(ctx);
+      Object.assign(p, body(S.PolicyPatchSchema, ctx.body));
+      audit(ctx.db, ctx.orgId, person(ctx), "policy.updated", "policy", "", ctx.now);
+      return p;
+    },
+  },
+  {
+    method: "GET", path: "/api-keys", auth: "member", summary: "API keys (prefix only; secrets are shown once at creation).",
+    response: z.array(S.ApiKeySchema),
+    handler: (ctx) => inOrg(ctx.db.apiKeys, ctx.orgId),
+  },
+  {
+    method: "POST", path: "/api-keys", auth: "apikey.manage", summary: "Create an API key. The secret is returned once.",
+    request: S.ApiKeyInputSchema, response: S.ApiKeyCreatedSchema,
+    handler: (ctx) => {
+      const input = body(S.ApiKeyInputSchema, ctx.body);
+      const secret = `fp_live_${fakeSha(input.name + ctx.now).slice(0, 32)}`;
+      const key = { id: newId("key"), orgId: ctx.orgId, name: input.name, prefix: secret.slice(0, 12), scopes: input.scopes, createdBy: me(ctx).id, createdAt: toIso(ctx.now), lastUsedAt: null };
+      ctx.db.apiKeys.push(key);
+      audit(ctx.db, ctx.orgId, person(ctx), "apikey.created", `apikey:${key.id}`, key.name, ctx.now);
+      return { key, secret };
+    },
+  },
+  {
+    method: "POST", path: "/api-keys/:id/revoke", auth: "apikey.manage", summary: "Revoke an API key immediately.",
+    response: S.OkSchema,
+    handler: (ctx) => {
+      const k = own(ctx, ctx.db.apiKeys, ctx.params.id, "API key");
+      ctx.db.apiKeys = ctx.db.apiKeys.filter((x) => x !== k);
+      audit(ctx.db, ctx.orgId, person(ctx), "apikey.revoked", `apikey:${k.id}`, k.name, ctx.now);
+      return { ok: true };
+    },
+  },
+  {
+    method: "GET", path: "/audit-logs", auth: "member", summary: "Audit log of user, agent and system actions. ?actorType= &q= &limit=",
+    response: z.array(S.ActivityItemSchema),
+    handler: (ctx) => {
+      const q = (ctx.query.get("q") ?? "").toLowerCase();
+      const type = ctx.query.get("actorType");
+      return activity(ctx.db, inOrg(ctx.db.auditLogs, ctx.orgId).filter((l) => (!type || l.actor.type === type) && (!q || l.action.includes(q) || l.detail.toLowerCase().includes(q) || l.resource.includes(q))).slice(0, Number(ctx.query.get("limit") ?? 200)));
+    },
+  },
+
+  // ===== billing
+  {
+    method: "GET", path: "/plans", auth: "public", summary: "Public plan catalogue (pricing page).",
+    response: z.array(S.PlanSchema), handler: () => PLANS,
+  },
+  {
+    method: "GET", path: "/billing", auth: "member", summary: "Plan, metered usage vs quota, projected spend, budget, cost breakdowns and invoices.",
+    response: S.BillingSchema, handler: billing,
+  },
+  {
+    method: "POST", path: "/billing/plan", auth: "billing.manage", summary: "Change plan or billing cycle (mock checkout). Enterprise is sales-assisted.",
+    request: S.ChangePlanInputSchema, response: S.BillingSchema,
+    handler: (ctx) => {
+      const input = body(S.ChangePlanInputSchema, ctx.body);
+      if (input.plan === "enterprise") throw new HttpError(409, "Enterprise is set up with our team — use “Talk to sales”.");
+      const o = org(ctx);
+      const target = planById(input.plan);
+      const seatsUsed = ctx.db.memberships.filter((m) => m.orgId === o.id).length;
+      if (target.limits.seats !== null && seatsUsed > target.limits.seats) throw new HttpError(409, `${target.name} includes ${target.limits.seats} seat(s); you have ${seatsUsed} members.`);
+      const repos = inOrg(ctx.db.repositories, o.id).length;
+      if (target.limits.repositories !== null && repos > target.limits.repositories) throw new HttpError(409, `${target.name} allows ${target.limits.repositories} repositories; you have ${repos}.`);
+      o.plan = input.plan;
+      o.billingCycle = input.billingCycle;
+      o.trialEndsAt = null;
+      audit(ctx.db, ctx.orgId, person(ctx), "billing.plan_changed", "billing", `${target.name} (${input.billingCycle})`, ctx.now);
+      return billing(ctx);
+    },
+  },
+  {
+    method: "POST", path: "/billing/budget", auth: "billing.manage", summary: "Set the monthly execution budget, hard cap and alert thresholds.",
+    request: S.BudgetInputSchema, response: S.BillingSchema,
+    handler: (ctx) => {
+      org(ctx).budget = body(S.BudgetInputSchema, ctx.body);
+      audit(ctx.db, ctx.orgId, person(ctx), "billing.budget_updated", "billing", `$${org(ctx).budget.monthlyLimitUsd}`, ctx.now);
+      return billing(ctx);
+    },
+  },
+
+  // ===== notifications, search, demo
+  {
+    method: "GET", path: "/notifications", auth: "member", summary: "Notifications for the active workspace.",
+    response: z.array(S.NotificationSchema),
+    handler: (ctx) => inOrg(ctx.db.notifications, ctx.orgId).sort((a, b) => b.at.localeCompare(a.at)),
+  },
+  {
+    method: "POST", path: "/notifications/read", auth: "member", summary: "Mark notifications read. Body { ids?: string[] }.",
+    request: z.object({ ids: z.array(z.string()).optional() }), response: S.OkSchema,
+    handler: (ctx) => {
+      const { ids } = body(z.object({ ids: z.array(z.string()).optional() }), ctx.body);
+      inOrg(ctx.db.notifications, ctx.orgId).forEach((n) => (!ids || ids.includes(n.id)) && (n.read = true));
+      return { ok: true };
+    },
+  },
+  {
+    method: "GET", path: "/search", auth: "member", summary: "Search projects, repositories, tasks, PRs, bugs, findings and sessions. ?q=",
+    response: z.array(S.SearchResultSchema),
+    handler: (ctx) => {
+      const { db, orgId } = ctx;
+      const q = (ctx.query.get("q") ?? "").trim().toLowerCase();
+      const hit = (...s: (string | null | undefined)[]) => !q || s.some((x) => x?.toLowerCase().includes(q));
+      const out: S.SearchResult[] = [];
+      inOrg(db.projects, orgId).filter((p) => hit(p.name)).forEach((p) => out.push({ kind: "project", id: p.id, title: p.name, subtitle: p.description, href: `/app/projects/${p.id}` }));
+      inOrg(db.repositories, orgId).filter((r) => hit(r.fullName)).forEach((r) => out.push({ kind: "repository", id: r.id, title: r.fullName, subtitle: r.frameworks.join(", "), href: `/app/repositories/${r.id}` }));
+      inOrg(db.tasks, orgId).filter((t) => hit(t.title, t.id, t.sourceRef)).forEach((t) => out.push({ kind: "task", id: t.id, title: t.title, subtitle: `${t.id} · ${t.status.replace("_", " ")}`, href: `/app/devpilot/tasks/${t.id}` }));
+      inOrg(db.pullRequests, orgId).filter((p) => hit(p.title, `#${p.number}`, String(p.number))).forEach((p) => out.push({ kind: "pull_request", id: p.id, title: `#${p.number} ${p.title}`, subtitle: db.repositories.find((r) => r.id === p.repositoryId)!.fullName, href: `/app/pull-requests/${p.id}` }));
+      inOrg(db.bugs, orgId).filter((b) => hit(b.title)).forEach((b) => out.push({ kind: "bug", id: b.id, title: b.title, subtitle: b.severity, href: `/app/shipsafe/bugs/${b.id}` }));
+      inOrg(db.findings, orgId).filter((f) => q && hit(f.title, f.advisoryId, f.package)).forEach((f) => out.push({ kind: "finding", id: f.id, title: f.title, subtitle: f.advisoryId ?? f.category, href: `/app/codekeeper/findings?finding=${f.id}` }));
+      return out.slice(0, 50);
+    },
+  },
+  {
+    method: "POST", path: "/demo/reset", auth: "public", summary: "Reset all mock data to the seed (demo mode).",
+    response: S.OkSchema,
     handler: () => {
       resetDb();
       return { ok: true };
@@ -1413,54 +1467,34 @@ export interface DispatchResult {
   setCookies?: { name: string; value: string }[];
 }
 
-export function dispatch(
-  method: string,
-  path: string,
-  query: URLSearchParams,
-  body: unknown,
-  sessionUserId: string | undefined,
-): DispatchResult {
+export function dispatch(method: string, path: string, query: URLSearchParams, reqBody: unknown, cookies: { session?: string; workspace?: string }): DispatchResult {
   let db: MockDb;
   try {
     db = getDb();
   } catch (e) {
-    // Invalid mock data: fail loudly (FE-03).
     return { status: 500, body: { error: (e as Error).message, kind: "mock_data_invalid" } };
   }
   const candidates = routes.filter((r) => match(r.path, path));
   const route = candidates.find((r) => r.method === method);
-  if (!route)
-    return {
-      status: candidates.length ? 405 : 404,
-      body: { error: `No mock route for ${method} ${path}` },
-    };
-  const user = db.users.find((u) => u.id === sessionUserId) ?? null;
-  const ctx: Ctx = { db, user, params: match(route.path, path)!, query, body, now: Date.now() };
+  if (!route) return { status: candidates.length ? 405 : 404, body: { error: `No mock route for ${method} ${path}` } };
+  const user = db.users.find((u) => u.id === cookies.session) ?? null;
+  const memberships = user ? db.memberships.filter((m) => m.userId === user.id) : [];
+  const membership = memberships.find((m) => m.orgId === cookies.workspace) ?? memberships[0];
+  const ctx: Ctx = { db, user, orgId: membership?.orgId ?? "", role: membership?.role, params: match(route.path, path)!, query, body: reqBody, now: Date.now() };
   try {
-    if (route.auth !== "public") requireUser(ctx);
-    if (route.auth === "portal" && user && areaForRole(user.role) !== "portal")
-      throw new HttpError(403, "Client portal only");
-    if (route.auth === "console" && user && areaForRole(user.role) !== "console")
-      throw new HttpError(403, "ForgePilot console only");
-    if (route.auth === "manager" && user && !isManager(user.role))
-      throw new HttpError(403, "Delivery managers only");
+    if (route.auth !== "public") {
+      if (!user) throw new HttpError(401, "Not signed in");
+      if (!membership) throw new HttpError(403, "No workspace — finish onboarding first");
+      if (route.auth !== "member") require(ctx, route.auth);
+    }
     const result = route.handler(ctx);
     if (process.env.NODE_ENV !== "production") {
       const check = route.response.safeParse(result);
-      if (!check.success) {
-        return {
-          status: 500,
-          body: {
-            error: `Response for ${method} ${route.path} does not match its schema`,
-            details: z.flattenError(check.error),
-          },
-        };
-      }
+      if (!check.success) return { status: 500, body: { error: `Response for ${method} ${route.path} does not match its schema`, details: z.flattenError(check.error) } };
     }
     return { status: 200, body: result, setCookies: ctx.setCookies };
   } catch (e) {
-    if (e instanceof HttpError)
-      return { status: e.status, body: { error: e.message, details: e.details } };
+    if (e instanceof HttpError) return { status: e.status, body: { error: e.message, details: e.details } };
     return { status: 500, body: { error: (e as Error).message } };
   }
 }
