@@ -149,11 +149,12 @@ export function useRunScan(repoId: string) {
 }
 
 // ---------------------------------------------------------------- tasks
-export function useTasks(filters: TaskFilters = {}, opts: { refetchInterval?: number } = {}) {
+export function useTasks(filters: TaskFilters = {}, opts: { refetchInterval?: number; enabled?: boolean } = {}) {
   return useQuery({
     queryKey: qk.tasks(filters),
     queryFn: () => api.get(z.array(TaskListItemSchema), "/tasks", filters),
     refetchInterval: opts.refetchInterval,
+    enabled: opts.enabled ?? true,
   });
 }
 
@@ -225,10 +226,11 @@ export function useApprove() {
   });
 }
 
-export function useApprovals() {
+export function useApprovals(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: qk.approvals,
     queryFn: () => api.get(z.array(ApprovalQueueItemSchema), "/approvals"),
+    enabled: opts.enabled ?? true,
   });
 }
 

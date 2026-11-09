@@ -33,7 +33,9 @@ export function generateLog(task: Task, repo: Repository, run: AgentRun, now: nu
   const human = task.manualTakeoverBy ? " (engineer driving)" : "";
   const intro: [LogLine["level"], string][] = [
     ["info", `Sandbox ready · ${repo.language} toolchain · branch fp/${task.id}${human}`],
-    ["info", `Agent ${run.agent} (${run.model}) attempt #${run.attempt} started`],
+    run.model.startsWith("manual:")
+      ? ["info", `${run.model.slice(7)} is making this change by hand (attempt #${run.attempt}); the verification gate still applies`]
+      : ["info", `Agent ${run.agent} (${run.model}) attempt #${run.attempt} started`],
     ["tool", `git clone ${repo.url} --branch ${repo.defaultBranch}`],
     ["info", `Loaded client context graph: 412 symbols, 37 prior changes`],
     ["info", `Plan: ${task.plan.steps.join(" → ")}`],

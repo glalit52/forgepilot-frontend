@@ -13,8 +13,9 @@ import { UserMenu } from "./user-menu";
 import { OrgSwitcher } from "./org-switcher";
 
 function useBadges(area: Area) {
-  const approvals = useApprovals();
-  const queue = useTasks({ mine: true });
+  // Each area only calls its own endpoints (/approvals is portal-only).
+  const approvals = useApprovals({ enabled: area === "portal" });
+  const queue = useTasks({ mine: true }, { enabled: area === "console" });
   if (area === "portal") return { approvals: approvals.data?.length ?? 0, queue: 0 };
   const needs = (queue.data ?? []).filter((t) =>
     ["awaiting_review", "escalated", "plan_approved", "retrying", "rejected"].includes(t.state),
