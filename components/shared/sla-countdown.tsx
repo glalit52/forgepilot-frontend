@@ -37,6 +37,7 @@ export function SlaCountdown({ dueAt, risk, className }: { dueAt: string; risk: 
         className,
       )}
       title={`Due ${formatDateTime(dueAt)}`}
+      suppressHydrationWarning
     >
       <ClockIcon className="size-3" aria-hidden />
       {text}

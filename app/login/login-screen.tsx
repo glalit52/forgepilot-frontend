@@ -108,6 +108,20 @@ export function LoginScreen() {
             </Card>
           </div>
         )}
+        <div className="text-muted-foreground flex flex-wrap items-center justify-center gap-2 text-sm">
+          <span>New client?</span>
+          <button
+            className="text-primary font-medium underline-offset-4 hover:underline"
+            disabled={pending}
+            onClick={() => switchTo("u_ravi", "/portal/onboarding")}
+          >
+            Try the onboarding wizard
+          </button>
+          <span aria-hidden>·</span>
+          <a className="text-primary font-medium underline-offset-4 hover:underline" href="/dev/components">
+            Component gallery
+          </a>
+        </div>
       </main>
     </div>
   );

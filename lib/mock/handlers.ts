@@ -6,6 +6,7 @@
 import "server-only";
 import { z } from "zod";
 import {
+  ActivityItemSchema,
   ApplicationDetailSchema,
   ApplicationSummarySchema,
   ApprovalInputSchema,
@@ -264,7 +265,7 @@ export const routes: RouteDef[] = [
     path: "/activity",
     auth: "any",
     summary: "Recent evidence events across visible organizations. ?limit=",
-    response: z.array(z.any()),
+    response: z.array(ActivityItemSchema),
     handler: (ctx) => activityFor(ctx.db, visibleOrgIds(ctx), Number(ctx.query.get("limit") ?? 20)),
   },
 
@@ -993,7 +994,7 @@ export const routes: RouteDef[] = [
           ["tests", "medium", "Low coverage on core module", "Generate regression tests for top journeys."],
           ["docs", "low", "Missing runbook", "Add runbook with rollback steps."],
         ] as const;
-        findingsSeed.slice(0, 2 + (seed % 3)).forEach(([dimension, severity, title, recommendation], fi) =>
+        findingsSeed.slice(0, 2 + (seed % 3)).forEach(([dimension, severity, title, recommendation]) =>
           db.findings.push({ id: newId("fnd"), repositoryId: repoId, dimension, severity, title, recommendation, status: "open", detectedAt: toIso(now) }),
         );
         db.healthHistory.push({ applicationId: appId, weekStart: toIso(now).slice(0, 10), score });

@@ -86,6 +86,18 @@ Task states (in order): `created → planned → plan_approved → running → v
 - Before finishing: `pnpm lint && pnpm typecheck && pnpm test` must pass; add a Playwright test for each new user journey.
 - Explain changes in plain English in the PR description — the founder is non-technical.
 
+## Decisions recorded (keep this list current)
+
+- **Next.js 16.** Middleware is now `proxy.ts`. Read `node_modules/next/dist/docs/` before using an unfamiliar API (see `AGENTS.md`). `cacheComponents` is **off** because pages are client components over TanStack Query; revisit when the real backend lands.
+- **shadcn/ui was installed by hand.** `ui.shadcn.com` is blocked in the cloud environment, so the primitives in `components/ui/` were written directly (radix-ui, new-york style). To add one, copy the upstream source by hand or run `pnpm dlx shadcn add …` on a machine with access.
+- **Tables:** `components/shared/data-table.tsx` is a small in-house sortable/paginated table. TanStack Table v9 was not adopted.
+- **Mock API = one route table.** `lib/mock/handlers.ts` holds every endpoint (method, path, auth, request/response schema). `app/api/mock/[...path]/route.ts` dispatches to it. Mutations live in an in-memory DB on `globalThis`, and `POST /api/mock/demo/reset` restores the seed.
+- **Simulation:** agent runs, verification and scans advance on each request, by time. Durations come from `FP_MOCK_RUN_MS` / `FP_MOCK_VERIFY_MS` / `FP_MOCK_SCAN_MS` (defaults 9s / 5s / 6s).
+- **API contract:** `docs/api-contract.md` is generated from the route table. Regenerate with `UPDATE_CONTRACT=1 pnpm test`.
+- **Mock session:** `fp_session` (user id) and `fp_role` cookies. `proxy.ts` does the optimistic redirect, `AppShell` re-checks on the client, and the mock API checks the user on every call.
+- **Theme tokens** live in `app/globals.css` (`--success/-soft/-foreground`, `--warning…`, `--danger…`, `--neutral…`, `--info…`). `tests/unit/contrast.test.ts` enforces WCAG AA for every pair in light and dark.
+- **Mock data** `estimatedHours` = effort a prior IT-services vendor would bill. Contracts carry `priorVendorBaselineHoursPerAppMonthly` for the savings report.
+
 ## Do not
 
 - Do not add a backend, database or auth provider yet (use a mock session with role switcher: client_admin, client_approver, client_viewer, fp_engineer, fp_manager).
