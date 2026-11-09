@@ -78,11 +78,18 @@ function useInvalidateAll() {
 
 // ---------------------------------------------------------------- session
 export function useSession() {
-  return useQuery({ queryKey: qk.session, queryFn: () => api.get(SessionSchema, "/session"), staleTime: 60_000 });
+  return useQuery({
+    queryKey: qk.session,
+    queryFn: () => api.get(SessionSchema, "/session"),
+    staleTime: 60_000,
+  });
 }
 
 export function usePersonas() {
-  return useQuery({ queryKey: qk.personas, queryFn: () => api.get(z.array(UserSchema), "/session/personas") });
+  return useQuery({
+    queryKey: qk.personas,
+    queryFn: () => api.get(z.array(UserSchema), "/session/personas"),
+  });
 }
 
 export function useSwitchPersona() {
@@ -98,7 +105,10 @@ export function useSwitchPersona() {
 
 // ---------------------------------------------------------------- portal
 export function usePortalOverview() {
-  return useQuery({ queryKey: qk.overview(), queryFn: () => api.get(PortalOverviewSchema, "/overview") });
+  return useQuery({
+    queryKey: qk.overview(),
+    queryFn: () => api.get(PortalOverviewSchema, "/overview"),
+  });
 }
 
 export function useActivity(limit = 20) {
@@ -149,7 +159,10 @@ export function useRunScan(repoId: string) {
 }
 
 // ---------------------------------------------------------------- tasks
-export function useTasks(filters: TaskFilters = {}, opts: { refetchInterval?: number; enabled?: boolean } = {}) {
+export function useTasks(
+  filters: TaskFilters = {},
+  opts: { refetchInterval?: number; enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: qk.tasks(filters),
     queryFn: () => api.get(z.array(TaskListItemSchema), "/tasks", filters),
@@ -165,7 +178,8 @@ export function useTask(id: string) {
     queryKey: qk.task(id),
     queryFn: () => api.get(TaskDetailSchema, `/tasks/${id}`),
     enabled: !!id,
-    refetchInterval: (q) => (q.state.data && LIVE_STATES.has(q.state.data.task.state) ? 1500 : false),
+    refetchInterval: (q) =>
+      q.state.data && LIVE_STATES.has(q.state.data.task.state) ? 1500 : false,
   });
 }
 
@@ -197,7 +211,8 @@ export function useCreateTask() {
 export function useTaskAction(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: TaskActionInput) => api.post(TaskDetailSchema, `/tasks/${id}/actions`, input),
+    mutationFn: (input: TaskActionInput) =>
+      api.post(TaskDetailSchema, `/tasks/${id}/actions`, input),
     onSuccess: (data) => {
       qc.setQueryData(qk.task(id), data);
       qc.invalidateQueries();
@@ -208,7 +223,8 @@ export function useTaskAction(id: string) {
 export function useApprovalDecision(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: ApprovalInput) => api.post(TaskDetailSchema, `/tasks/${id}/approval`, input),
+    mutationFn: (input: ApprovalInput) =>
+      api.post(TaskDetailSchema, `/tasks/${id}/approval`, input),
     onSuccess: (data) => {
       qc.setQueryData(qk.task(id), data);
       qc.invalidateQueries();
@@ -268,7 +284,10 @@ export function useSlaReport(orgId?: string) {
 
 // ---------------------------------------------------------------- console
 export function useClients() {
-  return useQuery({ queryKey: qk.clients, queryFn: () => api.get(z.array(ClientSummarySchema), "/clients") });
+  return useQuery({
+    queryKey: qk.clients,
+    queryFn: () => api.get(z.array(ClientSummarySchema), "/clients"),
+  });
 }
 
 export function useClient(id: string) {
@@ -284,7 +303,10 @@ export function useOps() {
 }
 
 export function useEngineers() {
-  return useQuery({ queryKey: qk.engineers, queryFn: () => api.get(z.array(UserSchema), "/engineers") });
+  return useQuery({
+    queryKey: qk.engineers,
+    queryFn: () => api.get(z.array(UserSchema), "/engineers"),
+  });
 }
 
 // ---------------------------------------------------------------- team, integrations, notifications
@@ -319,7 +341,8 @@ export function useConnectIntegration() {
 export function useDisconnectIntegration() {
   const invalidate = useInvalidateAll();
   return useMutation({
-    mutationFn: (providerId: string) => api.post(OkSchema, `/integrations/${providerId}/disconnect`),
+    mutationFn: (providerId: string) =>
+      api.post(OkSchema, `/integrations/${providerId}/disconnect`),
     onSuccess: invalidate,
   });
 }
@@ -353,7 +376,8 @@ export function useSearch(q: string, enabled = true) {
 export function useGitRepos(provider: string, account: string, enabled: boolean) {
   return useQuery({
     queryKey: qk.gitRepos(provider, account),
-    queryFn: () => api.get(z.array(GitRepoCandidateSchema), "/onboarding/git-repos", { provider, account }),
+    queryFn: () =>
+      api.get(z.array(GitRepoCandidateSchema), "/onboarding/git-repos", { provider, account }),
     enabled,
   });
 }

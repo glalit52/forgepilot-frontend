@@ -1,10 +1,23 @@
 "use client";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  ArrowUpDownIcon,
+  ArrowUpIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "./states";
 
@@ -79,13 +92,22 @@ export function DataTable<T>({
   const visible = sorted.slice(current * pageSize, current * pageSize + pageSize);
 
   const toggleSort = (id: string) =>
-    setSort((s) => (s?.id !== id ? { id, dir: "asc" } : s.dir === "asc" ? { id, dir: "desc" } : null));
+    setSort((s) =>
+      s?.id !== id ? { id, dir: "asc" } : s.dir === "asc" ? { id, dir: "desc" } : null,
+    );
 
   const hide = (c: Column<T>) =>
-    c.hideBelow === "md" ? "hidden md:table-cell" : c.hideBelow === "lg" ? "hidden lg:table-cell" : c.hideBelow === "xl" ? "hidden xl:table-cell" : "";
+    c.hideBelow === "md"
+      ? "hidden md:table-cell"
+      : c.hideBelow === "lg"
+        ? "hidden lg:table-cell"
+        : c.hideBelow === "xl"
+          ? "hidden xl:table-cell"
+          : "";
 
   const selectableRows = selectable ? visible.filter((r) => isRowSelectable?.(r) ?? true) : [];
-  const allChecked = selectableRows.length > 0 && selectableRows.every((r) => selected?.has(getRowId(r)));
+  const allChecked =
+    selectableRows.length > 0 && selectableRows.every((r) => selected?.has(getRowId(r)));
 
   if (!rows.length) return <>{empty ?? <EmptyState title="Nothing here yet" />}</>;
 
@@ -103,7 +125,9 @@ export function DataTable<T>({
                     checked={allChecked}
                     onCheckedChange={(v) => {
                       const next = new Set(selected);
-                      selectableRows.forEach((r) => (v ? next.add(getRowId(r)) : next.delete(getRowId(r))));
+                      selectableRows.forEach((r) =>
+                        v ? next.add(getRowId(r)) : next.delete(getRowId(r)),
+                      );
                       onSelectedChange?.(next);
                     }}
                   />
@@ -111,18 +135,27 @@ export function DataTable<T>({
               )}
               {columns.map((c) => {
                 const active = sort?.id === c.id;
-                const Icon = !active ? ArrowUpDownIcon : sort.dir === "asc" ? ArrowUpIcon : ArrowDownIcon;
+                const Icon = !active
+                  ? ArrowUpDownIcon
+                  : sort.dir === "asc"
+                    ? ArrowUpIcon
+                    : ArrowDownIcon;
                 return (
                   <TableHead
                     key={c.id}
                     className={cn(c.align === "right" && "text-right", hide(c), c.className)}
-                    aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
+                    aria-sort={
+                      active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined
+                    }
                   >
                     {c.sortValue ? (
                       <button
                         type="button"
                         onClick={() => toggleSort(c.id)}
-                        className={cn("hover:text-foreground inline-flex items-center gap-1 rounded", active && "text-foreground")}
+                        className={cn(
+                          "hover:text-foreground inline-flex items-center gap-1 rounded",
+                          active && "text-foreground",
+                        )}
                       >
                         {c.header}
                         <Icon className="size-3 opacity-60" aria-hidden />
@@ -152,7 +185,8 @@ export function DataTable<T>({
                     router.push(href);
                   }}
                   onKeyDown={(e) => {
-                    if (href && e.key === "Enter" && e.target === e.currentTarget) router.push(href);
+                    if (href && e.key === "Enter" && e.target === e.currentTarget)
+                      router.push(href);
                   }}
                   tabIndex={href ? 0 : undefined}
                   aria-label={href ? `Open ${id}` : undefined}
@@ -173,7 +207,14 @@ export function DataTable<T>({
                     </TableCell>
                   )}
                   {columns.map((c) => (
-                    <TableCell key={c.id} className={cn(c.align === "right" && "text-right tabular-nums", hide(c), c.className)}>
+                    <TableCell
+                      key={c.id}
+                      className={cn(
+                        c.align === "right" && "text-right tabular-nums",
+                        hide(c),
+                        c.className,
+                      )}
+                    >
                       {c.cell(row)}
                     </TableCell>
                   ))}
@@ -186,16 +227,29 @@ export function DataTable<T>({
       {pages > 1 && (
         <div className="text-muted-foreground flex items-center justify-between text-xs">
           <span>
-            {current * pageSize + 1}–{Math.min(sorted.length, (current + 1) * pageSize)} of {sorted.length}
+            {current * pageSize + 1}–{Math.min(sorted.length, (current + 1) * pageSize)} of{" "}
+            {sorted.length}
           </span>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon-sm" onClick={() => setPage(current - 1)} disabled={current === 0} aria-label="Previous page">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setPage(current - 1)}
+              disabled={current === 0}
+              aria-label="Previous page"
+            >
               <ChevronLeftIcon />
             </Button>
             <span>
               Page {current + 1} of {pages}
             </span>
-            <Button variant="ghost" size="icon-sm" onClick={() => setPage(current + 1)} disabled={current >= pages - 1} aria-label="Next page">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setPage(current + 1)}
+              disabled={current >= pages - 1}
+              aria-label="Next page"
+            >
               <ChevronRightIcon />
             </Button>
           </div>
@@ -206,7 +260,13 @@ export function DataTable<T>({
 }
 
 /** Small filter bar container + a labelled select helper. */
-export function FilterBar({ children, className }: { children: React.ReactNode; className?: string }) {
+export function FilterBar({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
     <div role="search" className={cn("flex flex-wrap items-end gap-2", className)}>
       {children}

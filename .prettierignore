@@ -5,3 +5,4 @@ mocks/mock-data.json
 playwright-report
 test-results
 coverage
+docs/api-contract.md

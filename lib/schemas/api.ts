@@ -280,7 +280,9 @@ export const RepositoryDetailSchema = z.object({
   findings: z.array(FindingSchema),
   scans: z.array(ScanSchema),
   tasks: z.array(TaskListItemSchema),
-  flakyTests: z.array(z.object({ name: z.string(), failureRatePct: z.number(), lastSeen: z.string() })),
+  flakyTests: z.array(
+    z.object({ name: z.string(), failureRatePct: z.number(), lastSeen: z.string() }),
+  ),
 });
 export type RepositoryDetail = z.infer<typeof RepositoryDetailSchema>;
 
@@ -304,7 +306,12 @@ export const SavingsReportSchema = z.object({
   month: z.string(),
   availableMonths: z.array(z.string()),
   byType: z.array(
-    z.object({ type: TaskTypeSchema, count: z.number(), hours: z.number(), priorVendorCostUsd: z.number() }),
+    z.object({
+      type: TaskTypeSchema,
+      count: z.number(),
+      hours: z.number(),
+      priorVendorCostUsd: z.number(),
+    }),
   ),
   totals: z.object({
     tasks: z.number(),
@@ -386,10 +393,19 @@ export const OpsDashboardSchema = z.object({
     escalations: z.number(),
   }),
   tasksByStateByClient: z.array(z.record(z.string(), z.union([z.string(), z.number()]))),
-  agentShareTrend: z.array(z.object({ week: z.string(), agentPct: z.number(), humanPct: z.number() })),
+  agentShareTrend: z.array(
+    z.object({ week: z.string(), agentPct: z.number(), humanPct: z.number() }),
+  ),
   slaRisk: z.array(TaskListItemSchema),
   workload: z.array(z.object({ user: UserSchema, active: z.number(), awaitingReview: z.number() })),
-  costByAgent: z.array(z.object({ agent: AgentKindSchema, runs: z.number(), costUsd: z.number(), successPct: z.number() })),
+  costByAgent: z.array(
+    z.object({
+      agent: AgentKindSchema,
+      runs: z.number(),
+      costUsd: z.number(),
+      successPct: z.number(),
+    }),
+  ),
 });
 export type OpsDashboard = z.infer<typeof OpsDashboardSchema>;
 
@@ -493,5 +509,3 @@ export type SearchResult = z.infer<typeof SearchResultSchema>;
 
 export const NotificationListSchema = z.array(NotificationSchema);
 export const OkSchema = z.object({ ok: z.literal(true) });
-
-

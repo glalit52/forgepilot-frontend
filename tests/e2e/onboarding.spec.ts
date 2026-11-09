@@ -33,11 +33,13 @@ test("new client onboards and sees the health report", async ({ page }) => {
   await page.getByRole("button", { name: "Next" }).click();
 
   // 4. Map to applications.
-  await expect(page.getByRole("heading", { name: "Map repositories to applications" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Map repositories to applications" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Next" }).click();
 
   // 5. Confirm SLA tier.
-  await page.getByRole("radio", { name: /Maintain \+ Assure/ }).click();
+  await page.getByRole("radio", { name: "Maintain + Assure" }).click();
   await page.getByRole("button", { name: "Confirm and start health scan" }).click();
 
   // 6. Scan running → health report ready.

@@ -34,11 +34,17 @@ export function ActorChip({
           className={cn(
             "inline-flex shrink-0 items-center justify-center rounded-md",
             box,
-            actor.type === "agent" ? "bg-accent text-accent-foreground" : "bg-muted text-muted-foreground",
+            actor.type === "agent"
+              ? "bg-accent text-accent-foreground"
+              : "bg-muted text-muted-foreground",
           )}
           aria-hidden
         >
-          {actor.type === "agent" ? <BotIcon className="size-3.5" /> : <CpuIcon className="size-3.5" />}
+          {actor.type === "agent" ? (
+            <BotIcon className="size-3.5" />
+          ) : (
+            <CpuIcon className="size-3.5" />
+          )}
         </span>
       )}
       <span className="truncate font-medium">{actor.name}</span>

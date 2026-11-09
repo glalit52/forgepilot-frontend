@@ -29,13 +29,16 @@ export function UserMenu({ compact }: { compact?: boolean }) {
   const { user, personas, organization } = data;
   const portal = personas.filter((p) => PORTAL_ROLES.includes(p.role));
   const console_ = personas.filter((p) => !PORTAL_ROLES.includes(p.role));
-  const orgName = (id: string | null) => (id ? id.replace("org_", "").replace(/_/g, " ") : "ForgePilot");
+  const orgName = (id: string | null) =>
+    id ? id.replace("org_", "").replace(/_/g, " ") : "ForgePilot";
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
-          className={compact ? "size-9 rounded-full p-0" : "h-auto w-full justify-start gap-2 px-2 py-1.5"}
+          className={
+            compact ? "size-9 rounded-full p-0" : "h-auto w-full justify-start gap-2 px-2 py-1.5"
+          }
           aria-label={`User menu: ${user.name}, ${ROLE_LABEL[user.role]}. Switch role`}
           disabled={pending}
         >
@@ -45,7 +48,9 @@ export function UserMenu({ compact }: { compact?: boolean }) {
           {!compact && (
             <span className="flex min-w-0 flex-col items-start text-left leading-tight">
               <span className="truncate text-sm font-medium">{user.name}</span>
-              <span className="text-muted-foreground truncate text-xs">{ROLE_LABEL[user.role]}</span>
+              <span className="text-muted-foreground truncate text-xs">
+                {ROLE_LABEL[user.role]}
+              </span>
             </span>
           )}
         </Button>
@@ -62,9 +67,15 @@ export function UserMenu({ compact }: { compact?: boolean }) {
           <UserCogIcon className="size-3.5" aria-hidden /> Switch role (mock session)
         </DropdownMenuLabel>
         <DropdownMenuGroup>
-          <DropdownMenuLabel className="pt-0 text-[11px] uppercase">Client portal</DropdownMenuLabel>
+          <DropdownMenuLabel className="pt-0 text-[11px] uppercase">
+            Client portal
+          </DropdownMenuLabel>
           {portal.map((p) => (
-            <DropdownMenuItem key={p.id} onSelect={() => p.id !== user.id && switchTo(p.id)} data-testid={`persona-${p.role}-${p.id}`}>
+            <DropdownMenuItem
+              key={p.id}
+              onSelect={() => p.id !== user.id && switchTo(p.id)}
+              data-testid={`persona-${p.role}-${p.id}`}
+            >
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate">{p.name}</span>
                 <span className="text-muted-foreground truncate text-xs capitalize">
@@ -74,9 +85,15 @@ export function UserMenu({ compact }: { compact?: boolean }) {
               {p.id === user.id && <CheckIcon aria-label="current" />}
             </DropdownMenuItem>
           ))}
-          <DropdownMenuLabel className="text-[11px] uppercase">ForgePilot console</DropdownMenuLabel>
+          <DropdownMenuLabel className="text-[11px] uppercase">
+            ForgePilot console
+          </DropdownMenuLabel>
           {console_.map((p) => (
-            <DropdownMenuItem key={p.id} onSelect={() => p.id !== user.id && switchTo(p.id)} data-testid={`persona-${p.role}-${p.id}`}>
+            <DropdownMenuItem
+              key={p.id}
+              onSelect={() => p.id !== user.id && switchTo(p.id)}
+              data-testid={`persona-${p.role}-${p.id}`}
+            >
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate">{p.name}</span>
                 <span className="text-muted-foreground text-xs">{ROLE_LABEL[p.role]}</span>
@@ -89,7 +106,10 @@ export function UserMenu({ compact }: { compact?: boolean }) {
         <DropdownMenuItem
           onSelect={() =>
             reset.mutate(undefined, {
-              onSuccess: () => toast.success("Demo data reset", { description: "Everything is back to the seeded story." }),
+              onSuccess: () =>
+                toast.success("Demo data reset", {
+                  description: "Everything is back to the seeded story.",
+                }),
             })
           }
         >

@@ -24,7 +24,10 @@ export function SlaMeter({
         <span className="text-muted-foreground">{label}</span>
         <span className="font-semibold tabular-nums">
           {formatPct(metPct, 1)}
-          <span className="text-muted-foreground font-normal"> / {formatPct(targetPct)} target</span>
+          <span className="text-muted-foreground font-normal">
+            {" "}
+            / {formatPct(targetPct)} target
+          </span>
         </span>
       </div>
       <div
@@ -35,7 +38,10 @@ export function SlaMeter({
         aria-valuenow={metPct}
         aria-label={`${label}: ${metPct}% against ${targetPct}% target`}
       >
-        <div className={cn("h-full rounded-full", bar)} style={{ width: `${Math.min(100, metPct)}%` }} />
+        <div
+          className={cn("h-full rounded-full", bar)}
+          style={{ width: `${Math.min(100, metPct)}%` }}
+        />
         <div
           className="bg-foreground absolute -top-1 h-4 w-0.5 rounded"
           style={{ left: `${targetPct}%` }}
@@ -43,7 +49,9 @@ export function SlaMeter({
         />
       </div>
       {breaches !== undefined && (
-        <span className={cn("text-xs", breaches ? "text-danger-foreground" : "text-muted-foreground")}>
+        <span
+          className={cn("text-xs", breaches ? "text-danger-foreground" : "text-muted-foreground")}
+        >
           {breaches === 0 ? "No breaches" : `${breaches} breach${breaches === 1 ? "" : "es"}`}
         </span>
       )}

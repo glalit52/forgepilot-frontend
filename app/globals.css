@@ -179,6 +179,6 @@
     font-feature-settings: "cv11", "ss01";
   }
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-ring;
+    @apply outline-ring outline-2 outline-offset-2;
   }
 }

@@ -17,11 +17,21 @@ export function HealthBreakdown({ health, className }: { health: HB; className?:
             <dt className="text-muted-foreground">{HEALTH_DIMENSION_LABEL[d]}</dt>
             <dd className="bg-muted h-2 overflow-hidden rounded-full" aria-hidden>
               <div
-                className={cn("h-full rounded-full", band === "healthy" ? "bg-success" : band === "at_risk" ? "bg-warning" : "bg-danger")}
+                className={cn(
+                  "h-full rounded-full",
+                  band === "healthy"
+                    ? "bg-success"
+                    : band === "at_risk"
+                      ? "bg-warning"
+                      : "bg-danger",
+                )}
                 style={{ width: `${v}%` }}
               />
             </dd>
-            <dd className="text-right font-medium tabular-nums" aria-label={`${HEALTH_DIMENSION_LABEL[d]} ${v} of 100`}>
+            <dd
+              className="text-right font-medium tabular-nums"
+              aria-label={`${HEALTH_DIMENSION_LABEL[d]} ${v} of 100`}
+            >
               {v}
             </dd>
           </div>

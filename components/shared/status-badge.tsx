@@ -29,7 +29,12 @@ export function ToneBadge({
     <Badge variant={tone === "accent" ? "accent" : tone} className={className}>
       <span className="relative flex size-1.5" aria-hidden>
         {pulse && (
-          <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", DOT[tone])} />
+          <span
+            className={cn(
+              "absolute inline-flex size-full animate-ping rounded-full opacity-60",
+              DOT[tone],
+            )}
+          />
         )}
         <span className={cn("relative inline-flex size-1.5 rounded-full", DOT[tone])} />
       </span>
@@ -51,9 +56,18 @@ export function StatusBadge({ state, className }: { state: TaskState; className?
   );
 }
 
-export function VerificationBadge({ status }: { status: "running" | "passed" | "failed" | null | undefined }) {
+export function VerificationBadge({
+  status,
+}: {
+  status: "running" | "passed" | "failed" | null | undefined;
+}) {
   if (!status) return <ToneBadge tone="neutral">Not run</ToneBadge>;
-  if (status === "running") return <ToneBadge tone="accent" pulse>Verifying</ToneBadge>;
+  if (status === "running")
+    return (
+      <ToneBadge tone="accent" pulse>
+        Verifying
+      </ToneBadge>
+    );
   return status === "passed" ? (
     <ToneBadge tone="success">Verification passed</ToneBadge>
   ) : (

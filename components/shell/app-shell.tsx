@@ -45,17 +45,26 @@ function RoleGuard({ area, children }: { area: Area; children: React.ReactNode }
   const pathname = usePathname();
   const params = useSearchParams();
   const denied = params.get("denied");
-  const allowed = !!data && canAccessPath(data.user.role, pathname) && areaForRole(data.user.role) === area;
+  const allowed =
+    !!data && canAccessPath(data.user.role, pathname) && areaForRole(data.user.role) === area;
   useEffect(() => {
     if (error) router.replace("/login");
-    else if (data && !allowed) router.replace(`${homeForRole(data.user.role)}?denied=${encodeURIComponent(pathname)}`);
+    else if (data && !allowed)
+      router.replace(`${homeForRole(data.user.role)}?denied=${encodeURIComponent(pathname)}`);
   }, [data, error, allowed, router, pathname]);
   useEffect(() => {
-    if (denied) toast.warning("You don't have access to that page", { description: `${denied} isn't available for your role.`, id: "denied" });
+    if (denied)
+      toast.warning("You don't have access to that page", {
+        description: `${denied} isn't available for your role.`,
+        id: "denied",
+      });
   }, [denied]);
   if (isPending || !allowed)
     return (
-      <div className="text-muted-foreground flex h-64 items-center justify-center gap-2 text-sm" aria-busy="true">
+      <div
+        className="text-muted-foreground flex h-64 items-center justify-center gap-2 text-sm"
+        aria-busy="true"
+      >
         <ShieldAlertIcon className="size-4" aria-hidden /> Checking access…
       </div>
     );
@@ -80,7 +89,13 @@ export function AppShell({
           <Sidebar area={area} collapsed={collapsed} onToggle={toggle} />
           <div className="flex min-w-0 flex-1 flex-col">
             <header className="bg-background/85 sticky top-0 z-40 flex h-14 items-center gap-2 border-b px-4 backdrop-blur lg:px-6">
-              <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="lg:hidden"
+                onClick={() => setMobileOpen(true)}
+                aria-label="Open navigation"
+              >
                 <MenuIcon />
               </Button>
               <div className="min-w-0 flex-1">

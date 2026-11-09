@@ -44,7 +44,9 @@ export function checkIntegrity(db: MockDb): string[] {
     ref(!t.assigneeUserId || users.has(t.assigneeUserId), `task ${t.id} → unknown assignee`);
   });
   db.agentRuns.forEach((r) => ref(tasks.has(r.taskId), `run ${r.id} → unknown task`));
-  db.verificationRuns.forEach((v) => ref(runs.has(v.agentRunId), `verification ${v.id} → unknown run`));
+  db.verificationRuns.forEach((v) =>
+    ref(runs.has(v.agentRunId), `verification ${v.id} → unknown run`),
+  );
   db.pullRequests.forEach((p) => ref(tasks.has(p.taskId), `PR ${p.id} → unknown task`));
   db.approvals.forEach((a) => {
     ref(tasks.has(a.taskId), `approval ${a.id} → unknown task`);
@@ -72,7 +74,10 @@ export function loadMockDb(raw: unknown): MockDb {
   const problems = checkIntegrity(parsed.data);
   if (problems.length) {
     throw new MockDataError(
-      `mocks/mock-data.json has broken references:\n${problems.slice(0, 15).map((p) => `  • ${p}`).join("\n")}`,
+      `mocks/mock-data.json has broken references:\n${problems
+        .slice(0, 15)
+        .map((p) => `  • ${p}`)
+        .join("\n")}`,
     );
   }
   return parsed.data;

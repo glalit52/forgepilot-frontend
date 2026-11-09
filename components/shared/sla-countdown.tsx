@@ -15,7 +15,15 @@ function useNow(intervalMs = 30_000) {
 }
 
 /** Live countdown to SLA due time, coloured by risk. */
-export function SlaCountdown({ dueAt, risk, className }: { dueAt: string; risk: TaskSlaRisk; className?: string }) {
+export function SlaCountdown({
+  dueAt,
+  risk,
+  className,
+}: {
+  dueAt: string;
+  risk: TaskSlaRisk;
+  className?: string;
+}) {
   const now = useNow();
   const diff = (Date.parse(dueAt) - now) / 1000;
   const text =

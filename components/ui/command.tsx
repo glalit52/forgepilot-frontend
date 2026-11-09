@@ -72,7 +72,7 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof Comman
   return (
     <CommandPrimitive.Item
       className={cn(
-        "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground",
+        "data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground [&_svg]:text-muted-foreground relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
         className,
       )}
       {...props}
@@ -83,7 +83,9 @@ function CommandSeparator({
   className,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Separator>) {
-  return <CommandPrimitive.Separator className={cn("bg-border -mx-1 h-px", className)} {...props} />;
+  return (
+    <CommandPrimitive.Separator className={cn("bg-border -mx-1 h-px", className)} {...props} />
+  );
 }
 export {
   Command,

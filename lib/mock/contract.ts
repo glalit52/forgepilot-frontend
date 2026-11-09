@@ -47,7 +47,11 @@ export function renderContract(): string {
       used.add(n.replace(/\[\]$/, ""));
       return `[\`${n}\`](#${n.replace(/\[\]$/, "").toLowerCase()})`;
     }
-    return "```json\n" + JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any", io: "output" }), null, 2) + "\n```";
+    return (
+      "```json\n" +
+      JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any", io: "output" }), null, 2) +
+      "\n```"
+    );
   };
 
   const lines: string[] = [
@@ -76,11 +80,19 @@ export function renderContract(): string {
   for (const r of routes) {
     const req = r.request ? typeName(r.request, names) : "—";
     const res = typeName(r.response, names);
-    lines.push(`| ${r.method} | \`${r.path}\` | ${AUTH_LABEL[r.auth]} | ${req === "—" ? "—" : req === "inline" ? "see below" : `\`${req}\``} | ${res === "inline" ? "see below" : `\`${res}\``} | ${r.summary.replace(/\|/g, "\\|")} |`);
+    lines.push(
+      `| ${r.method} | \`${r.path}\` | ${AUTH_LABEL[r.auth]} | ${req === "—" ? "—" : req === "inline" ? "see below" : `\`${req}\``} | ${res === "inline" ? "see below" : `\`${res}\``} | ${r.summary.replace(/\|/g, "\\|")} |`,
+    );
   }
   lines.push("", "## Endpoint details", "");
   for (const r of routes) {
-    lines.push(`### ${r.method} \`${r.path}\``, "", r.summary, "", `- **Auth:** ${AUTH_LABEL[r.auth]}`);
+    lines.push(
+      `### ${r.method} \`${r.path}\``,
+      "",
+      r.summary,
+      "",
+      `- **Auth:** ${AUTH_LABEL[r.auth]}`,
+    );
     if (r.request) lines.push(`- **Request body:** ${ref(r.request)}`);
     lines.push(`- **Response 200:** ${ref(r.response)}`, "");
   }

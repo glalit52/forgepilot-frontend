@@ -58,7 +58,10 @@ export function resolveActor(db: MockDb, actor: EvidenceRecord["actor"]): Resolv
   return { type: "system", id: actor.id, name, detail };
 }
 
-export function evidenceFor(db: MockDb, taskId: string): { items: EvidenceItem[]; chainValid: boolean } {
+export function evidenceFor(
+  db: MockDb,
+  taskId: string,
+): { items: EvidenceItem[]; chainValid: boolean } {
   const records = db.evidenceRecords
     .filter((e) => e.taskId === taskId)
     .sort((a, b) => a.at.localeCompare(b.at));
@@ -97,7 +100,9 @@ export function taskListItem(db: MockDb, task: Task, now = Date.now()): TaskList
   const app = db.applications.find((a) => a.id === task.applicationId);
   const org = db.organizations.find((o) => o.id === task.orgId);
   const repo = db.repositories.find((r) => r.id === task.repositoryId);
-  const runs = db.agentRuns.filter((r) => r.taskId === task.id).sort((a, b) => a.attempt - b.attempt);
+  const runs = db.agentRuns
+    .filter((r) => r.taskId === task.id)
+    .sort((a, b) => a.attempt - b.attempt);
   const latestRun = runs.at(-1) ?? null;
   const latestVerification = latestRun
     ? (db.verificationRuns.filter((v) => v.agentRunId === latestRun.id).at(-1) ?? null)
@@ -145,11 +150,19 @@ export function appHealth(db: MockDb, appId: string) {
   };
 }
 
-export function applicationSummary(db: MockDb, appId: string, now = Date.now()): ApplicationSummary {
+export function applicationSummary(
+  db: MockDb,
+  appId: string,
+  now = Date.now(),
+): ApplicationSummary {
   const app = db.applications.find((a) => a.id === appId)!;
   const repos = db.repositories.filter((r) => r.applicationId === appId);
-  const tasks = db.tasks.filter((t) => t.applicationId === appId).map((t) => taskListItem(db, t, now));
-  const hist = db.healthHistory.filter((h) => h.applicationId === appId).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+  const tasks = db.tasks
+    .filter((t) => t.applicationId === appId)
+    .map((t) => taskListItem(db, t, now));
+  const hist = db.healthHistory
+    .filter((h) => h.applicationId === appId)
+    .sort((a, b) => a.weekStart.localeCompare(b.weekStart));
   const health = appHealth(db, appId).score;
   const fourWeeksAgo = hist.at(-5)?.score ?? health;
   const contract = db.contracts.find((c) => c.orgId === app.orgId);
@@ -263,21 +276,39 @@ export function portalOverview(db: MockDb, orgId: string, now = Date.now()): Por
         severity: t.slaRisk === "breached" ? "danger" : "warning",
       }),
     );
-  const repoIds = new Set(db.repositories.filter((r) => apps.some((a) => a.id === r.applicationId)).map((r) => r.id));
+  const repoIds = new Set(
+    db.repositories.filter((r) => apps.some((a) => a.id === r.applicationId)).map((r) => r.id),
+  );
+  // Group critical findings by title so one CVE across many repos is one item.
+  const critical = new Map<string, { appIds: Set<string>; repos: string[]; id: string }>();
   db.findings
-    .filter((f) => repoIds.has(f.repositoryId) && f.severity === "critical" && f.status !== "resolved")
+    .filter(
+      (f) => repoIds.has(f.repositoryId) && f.severity === "critical" && f.status !== "resolved",
+    )
     .forEach((f) => {
       const repo = db.repositories.find((r) => r.id === f.repositoryId)!;
-      const app = apps.find((a) => a.id === repo.applicationId)!;
-      attention.push({
-        id: `cve_${f.id}`,
-        kind: "critical_cve",
-        title: f.title,
-        detail: `${app.name} · ${repoName(repo.url)}`,
-        href: `/portal/applications/${app.id}`,
-        severity: "danger",
-      });
+      const entry = critical.get(f.title) ?? { appIds: new Set<string>(), repos: [], id: f.id };
+      entry.appIds.add(repo.applicationId);
+      entry.repos.push(repoName(repo.url));
+      critical.set(f.title, entry);
     });
+  critical.forEach((entry, title) => {
+    const appNames = [...entry.appIds].map((id) => apps.find((a) => a.id === id)?.name ?? id);
+    attention.push({
+      id: `cve_${entry.id}`,
+      kind: "critical_cve",
+      title,
+      detail:
+        entry.repos.length === 1
+          ? `${appNames[0]} · ${entry.repos[0]}`
+          : `${entry.repos.length} repositories · ${appNames.join(", ")}`,
+      href:
+        entry.appIds.size === 1
+          ? `/portal/applications/${[...entry.appIds][0]}`
+          : "/portal/applications",
+      severity: "danger",
+    });
+  });
   db.integrations
     .filter((i) => i.orgId === orgId && i.status === "error")
     .forEach((i) =>
@@ -290,8 +321,18 @@ export function portalOverview(db: MockDb, orgId: string, now = Date.now()): Por
         severity: "info",
       }),
     );
-  const order = { danger: 0, warning: 1, info: 2 } as const;
-  attention.sort((a, b) => order[a.severity] - order[b.severity]);
+  // Spec order: approvals waiting, SLA at risk (breached first), critical CVEs, then the rest.
+  const kindOrder = {
+    approval: 0,
+    sla_risk: 1,
+    critical_cve: 2,
+    escalation: 3,
+    integration_error: 4,
+  };
+  const sevOrder = { danger: 0, warning: 1, info: 2 };
+  attention.sort(
+    (a, b) => kindOrder[a.kind] - kindOrder[b.kind] || sevOrder[a.severity] - sevOrder[b.severity],
+  );
 
   const metNow = slaMetPct(items);
   const prevItems = items.filter((t) => Date.parse(t.slaDueAt) < now - 30 * DAY);
@@ -338,11 +379,14 @@ export function evidencePack(db: MockDb, task: Task, now = Date.now()): Evidence
     records: items,
     chainValid,
     verification: passedVer ?? null,
-    agentLabel: item.latestRun ? `${AGENT_LABEL[item.latestRun.agent]} · ${item.latestRun.model}` : AGENT_LABEL[task.agent],
+    agentLabel: item.latestRun
+      ? `${AGENT_LABEL[item.latestRun.agent]} · ${item.latestRun.model}`
+      : AGENT_LABEL[task.agent],
     signOff: signOffFor(db, task.id),
     clientApproval: approval
       ? {
-          by: db.users.find((u) => u.id === approval.approverUserId)?.name ?? approval.approverUserId,
+          by:
+            db.users.find((u) => u.id === approval.approverUserId)?.name ?? approval.approverUserId,
           at: approval.at,
           decision: approval.decision,
         }
@@ -378,7 +422,13 @@ export function savingsReportFor(
   };
   const chosen = delivered.filter((x) => inPeriod(x.at));
   const rate = contract?.priorVendorHourlyRateUsd ?? 0;
-  const types = ["cve_patch", "dependency_upgrade", "bug_fix", "enhancement", "test_coverage"] as const;
+  const types = [
+    "cve_patch",
+    "dependency_upgrade",
+    "bug_fix",
+    "enhancement",
+    "test_coverage",
+  ] as const;
   const byType = types.map((type) => {
     const ts = chosen.filter((x) => x.t.type === type);
     const hours = ts.reduce((s, x) => s + x.t.estimatedHours, 0);
@@ -403,7 +453,8 @@ export function savingsReportFor(
       baselineCostUsd,
       forgePilotFeeUsd: fee,
       savingUsd,
-      savingPct: priorVendorCostUsd > 0 ? Math.round((savingUsd / priorVendorCostUsd) * 1000) / 10 : 0,
+      savingPct:
+        priorVendorCostUsd > 0 ? Math.round((savingUsd / priorVendorCostUsd) * 1000) / 10 : 0,
       applications: apps.length,
       pricePerAppMonthlyUsd: contract?.pricePerAppMonthlyUsd ?? 0,
     },
@@ -429,7 +480,9 @@ export function slaReportFor(db: MockDb, orgId: string, now = Date.now()): SlaRe
     .map((t) => ({ t, at: deliveredAt(db, t.id) }))
     .filter((x) => x.at)
     .map((x) => hoursBetween(x.t.createdAt, x.at!));
-  const runIds = new Set(db.agentRuns.filter((r) => tasks.some((t) => t.id === r.taskId)).map((r) => r.id));
+  const runIds = new Set(
+    db.agentRuns.filter((r) => tasks.some((t) => t.id === r.taskId)).map((r) => r.id),
+  );
   const verMins = db.verificationRuns
     .filter((v) => runIds.has(v.agentRunId) && v.status !== "running")
     .map((v) => v.durationMin);
@@ -440,7 +493,8 @@ export function slaReportFor(db: MockDb, orgId: string, now = Date.now()): SlaRe
       return pr ? hoursBetween(pr.openedAt, a.at) : null;
     })
     .filter((x): x is number => x !== null && x >= 0);
-  const avg = (xs: number[]) => (xs.length ? Math.round((xs.reduce((s, x) => s + x, 0) / xs.length) * 10) / 10 : null);
+  const avg = (xs: number[]) =>
+    xs.length ? Math.round((xs.reduce((s, x) => s + x, 0) / xs.length) * 10) / 10 : null;
   const p90 = percentile(verMins, 90);
   const met = slaMetPct(items);
   const cveMax = cveHours.length ? Math.round(Math.max(...cveHours) * 10) / 10 : null;
@@ -471,10 +525,48 @@ export function slaReportFor(db: MockDb, orgId: string, now = Date.now()): SlaRe
 
   return {
     metrics: [
-      { key: "slaMet", label: "Tasks delivered within SLA", unit: "pct", target: targets.slaMetTargetPct, actual: met, lowerIsBetter: false, met: met >= targets.slaMetTargetPct, samples: items.filter((t) => ["met", "missed", "breached"].includes(t.slaRisk)).length },
-      { key: "cvePatch", label: "Critical CVE patched (worst case)", unit: "hours", target: targets.criticalCvePatchHours, actual: cveMax, lowerIsBetter: true, met: cveMax === null ? null : cveMax <= targets.criticalCvePatchHours, samples: cveHours.length },
-      { key: "verification", label: "Verification time (p90)", unit: "minutes", target: targets.verificationMinutesP90, actual: p90, lowerIsBetter: true, met: p90 === null ? null : p90 <= targets.verificationMinutesP90, samples: verMins.length },
-      { key: "approval", label: "Client approval turnaround (avg)", unit: "hours", target: targets.approvalTurnaroundHours, actual: avg(approvalHours), lowerIsBetter: true, met: approvalHours.length ? (avg(approvalHours) ?? 0) <= targets.approvalTurnaroundHours : null, samples: approvalHours.length },
+      {
+        key: "slaMet",
+        label: "Tasks delivered within SLA",
+        unit: "pct",
+        target: targets.slaMetTargetPct,
+        actual: met,
+        lowerIsBetter: false,
+        met: met >= targets.slaMetTargetPct,
+        samples: items.filter((t) => ["met", "missed", "breached"].includes(t.slaRisk)).length,
+      },
+      {
+        key: "cvePatch",
+        label: "Critical CVE patched (worst case)",
+        unit: "hours",
+        target: targets.criticalCvePatchHours,
+        actual: cveMax,
+        lowerIsBetter: true,
+        met: cveMax === null ? null : cveMax <= targets.criticalCvePatchHours,
+        samples: cveHours.length,
+      },
+      {
+        key: "verification",
+        label: "Verification time (p90)",
+        unit: "minutes",
+        target: targets.verificationMinutesP90,
+        actual: p90,
+        lowerIsBetter: true,
+        met: p90 === null ? null : p90 <= targets.verificationMinutesP90,
+        samples: verMins.length,
+      },
+      {
+        key: "approval",
+        label: "Client approval turnaround (avg)",
+        unit: "hours",
+        target: targets.approvalTurnaroundHours,
+        actual: avg(approvalHours),
+        lowerIsBetter: true,
+        met: approvalHours.length
+          ? (avg(approvalHours) ?? 0) <= targets.approvalTurnaroundHours
+          : null,
+        samples: approvalHours.length,
+      },
     ],
     breaches,
     slaMetPct: met,
@@ -483,7 +575,12 @@ export function slaReportFor(db: MockDb, orgId: string, now = Date.now()): SlaRe
 }
 
 // ---------------------------------------------------------------- console
-export function clientSummary(db: MockDb, orgId: string, includeMargin: boolean, now = Date.now()): ClientSummary {
+export function clientSummary(
+  db: MockDb,
+  orgId: string,
+  includeMargin: boolean,
+  now = Date.now(),
+): ClientSummary {
   const org = db.organizations.find((o) => o.id === orgId)!;
   const contract = db.contracts.find((c) => c.orgId === orgId);
   const apps = db.applications.filter((a) => a.orgId === orgId);
@@ -530,10 +627,14 @@ export function opsDashboard(db: MockDb, now = Date.now()): OpsDashboard {
   const tasksWithRuns = new Set(runs30.map((r) => r.taskId));
   const revenue = db.organizations.reduce((s, o) => {
     const c = db.contracts.find((x) => x.orgId === o.id);
-    return s + (c?.pricePerAppMonthlyUsd ?? 0) * db.applications.filter((a) => a.orgId === o.id).length;
+    return (
+      s + (c?.pricePerAppMonthlyUsd ?? 0) * db.applications.filter((a) => a.orgId === o.id).length
+    );
   }, 0);
   const engineers = db.users.filter((u) => u.role === "fp_engineer" || u.role === "fp_manager");
-  const cost = runs30.reduce((s, r) => s + r.costUsd, 0) + (db.meta.fpEngineerMonthlyCostUsd ?? 9000) * engineers.length;
+  const cost =
+    runs30.reduce((s, r) => s + r.costUsd, 0) +
+    (db.meta.fpEngineerMonthlyCostUsd ?? 9000) * engineers.length;
 
   const stateGroups: [string, (s: Task["state"]) => boolean][] = [
     ["Planning", (s) => ["created", "planned", "plan_approved"].includes(s)],
@@ -556,7 +657,9 @@ export function opsDashboard(db: MockDb, now = Date.now()): OpsDashboard {
       const at = deliveredAt(db, t.id) ?? t.createdAt;
       return Date.parse(at) > w.start && Date.parse(at) <= w.end;
     });
-    const agentPct = ts.length ? Math.round(ts.reduce((s, t) => s + t.aiAuthoredPct, 0) / ts.length) : 0;
+    const agentPct = ts.length
+      ? Math.round(ts.reduce((s, t) => s + t.aiAuthoredPct, 0) / ts.length)
+      : 0;
     return {
       week: new Date(w.end).toISOString().slice(0, 10),
       agentPct,
@@ -589,7 +692,9 @@ export function opsDashboard(db: MockDb, now = Date.now()): OpsDashboard {
       .map((user) => ({
         user,
         active: items.filter((t) => t.assigneeUserId === user.id && isOpenTask(t.state)).length,
-        awaitingReview: items.filter((t) => t.assigneeUserId === user.id && t.state === "awaiting_review").length,
+        awaitingReview: items.filter(
+          (t) => t.assigneeUserId === user.id && t.state === "awaiting_review",
+        ).length,
       })),
     costByAgent: agents.map((agent) => {
       const rs = db.agentRuns.filter((r) => r.agent === agent && r.outcome !== "running");
@@ -597,7 +702,9 @@ export function opsDashboard(db: MockDb, now = Date.now()): OpsDashboard {
         agent,
         runs: rs.length,
         costUsd: Math.round(rs.reduce((s, r) => s + r.costUsd, 0) * 100) / 100,
-        successPct: rs.length ? Math.round((rs.filter((r) => r.outcome === "success").length / rs.length) * 100) : 0,
+        successPct: rs.length
+          ? Math.round((rs.filter((r) => r.outcome === "success").length / rs.length) * 100)
+          : 0,
       };
     }),
   };

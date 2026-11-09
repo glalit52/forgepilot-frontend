@@ -66,7 +66,7 @@ export function advanceSimulation(db: MockDb, now: number) {
     if (!task || task.state !== "running") continue;
     const endedAt = run.simulatedEndsAt;
     run.durationSec = Math.round((endedAt - Date.parse(run.startedAt)) / 1000);
-    run.tokens = 60_000 + (run.durationSec * 911) % 140_000;
+    run.tokens = 60_000 + ((run.durationSec * 911) % 140_000);
     run.costUsd = Math.round(run.tokens * 0.000009 * 100) / 100;
     run.outcome = run.simulateFailure ? "verification_failed" : "success";
     const seed = run.tokens;
@@ -104,21 +104,34 @@ export function advanceSimulation(db: MockDb, now: number) {
     const run = db.agentRuns.find((r) => r.id === v.agentRunId);
     const task = run && db.tasks.find((t) => t.id === run.taskId);
     if (!run || !task) continue;
-    const passed = v.testsFailed === 0 && v.securityFindings.critical + v.securityFindings.high === 0;
+    const passed =
+      v.testsFailed === 0 && v.securityFindings.critical + v.securityFindings.high === 0;
     v.status = passed ? "passed" : "failed";
     appendEvidence(
       db,
       task.id,
       passed ? "verification_passed" : "verification_failed",
       { type: "system", id: "verification-engine" },
-      { verificationId: v.id, testsPassed: v.testsPassed, testsFailed: v.testsFailed, riskScore: v.riskScore },
+      {
+        verificationId: v.id,
+        testsPassed: v.testsPassed,
+        testsFailed: v.testsFailed,
+        riskScore: v.riskScore,
+      },
       v.simulatedEndsAt,
     );
     const attempts = db.agentRuns.filter((r) => r.taskId === task.id).length;
     task.state = nextStateAfterVerification(passed, attempts);
     if (task.state === "escalated") {
       task.escalationReason = `Verification failed on ${attempts} attempts. Needs an engineer.`;
-      appendEvidence(db, task.id, "escalated", { type: "system", id: "forgepilot" }, { attempts }, v.simulatedEndsAt + 1);
+      appendEvidence(
+        db,
+        task.id,
+        "escalated",
+        { type: "system", id: "forgepilot" },
+        { attempts },
+        v.simulatedEndsAt + 1,
+      );
     }
     delete v.simulatedEndsAt;
   }
@@ -129,7 +142,7 @@ export function advanceSimulation(db: MockDb, now: number) {
     const repo = db.repositories.find((r) => r.id === scan.repositoryId);
     if (!repo) continue;
     const bump = (n: number, d: number) => Math.max(0, Math.min(100, n + d));
-    const seed = repo.id.length + Math.round(scan.simulatedEndsAt / 1000) % 5;
+    const seed = repo.id.length + (Math.round(scan.simulatedEndsAt / 1000) % 5);
     if (scan.trigger === "manual") {
       repo.health = {
         dependencies: bump(repo.health.dependencies, 2),
@@ -146,7 +159,9 @@ export function advanceSimulation(db: MockDb, now: number) {
     scan.status = "completed";
     scan.finishedAt = toIso(scan.simulatedEndsAt);
     scan.healthScore = repo.health.score;
-    scan.findingsCount = db.findings.filter((f) => f.repositoryId === repo.id && f.status !== "resolved").length;
+    scan.findingsCount = db.findings.filter(
+      (f) => f.repositoryId === repo.id && f.status !== "resolved",
+    ).length;
     delete scan.simulatedEndsAt;
   }
 }

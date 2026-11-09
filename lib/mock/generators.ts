@@ -1,5 +1,13 @@
 /** Deterministic generators for things the seed data doesn't store: live logs, diffs, repo lists. */
-import type { AgentRun, DiffFile, DiffLine, GitRepoCandidate, LogLine, Repository, Task } from "@/lib/schemas";
+import type {
+  AgentRun,
+  DiffFile,
+  DiffLine,
+  GitRepoCandidate,
+  LogLine,
+  Repository,
+  Task,
+} from "@/lib/schemas";
 import { toIso } from "./evidence";
 
 export const LOG_INTERVAL_MS = 1400;
@@ -11,11 +19,31 @@ function hashStr(s: string) {
 }
 
 const FILES_BY_LANG: Record<string, string[]> = {
-  java: ["src/main/java/com/acme/service/Handler.java", "src/main/java/com/acme/config/AppConfig.java", "src/test/java/com/acme/service/HandlerTest.java", "pom.xml"],
-  dotnet: ["src/Api/Controllers/PolicyController.cs", "src/Api/Program.cs", "tests/Api.Tests/PolicyControllerTests.cs", "src/Api/Api.csproj"],
-  typescript: ["src/server/routes/confirm.ts", "src/lib/http/retry.ts", "src/lib/http/retry.test.ts", "package.json"],
+  java: [
+    "src/main/java/com/acme/service/Handler.java",
+    "src/main/java/com/acme/config/AppConfig.java",
+    "src/test/java/com/acme/service/HandlerTest.java",
+    "pom.xml",
+  ],
+  dotnet: [
+    "src/Api/Controllers/PolicyController.cs",
+    "src/Api/Program.cs",
+    "tests/Api.Tests/PolicyControllerTests.cs",
+    "src/Api/Api.csproj",
+  ],
+  typescript: [
+    "src/server/routes/confirm.ts",
+    "src/lib/http/retry.ts",
+    "src/lib/http/retry.test.ts",
+    "package.json",
+  ],
   python: ["app/rules/engine.py", "app/api/routes.py", "tests/test_engine.py", "pyproject.toml"],
-  go: ["internal/handler/handler.go", "cmd/server/main.go", "internal/handler/handler_test.go", "go.mod"],
+  go: [
+    "internal/handler/handler.go",
+    "cmd/server/main.go",
+    "internal/handler/handler_test.go",
+    "go.mod",
+  ],
   kotlin: ["src/main/kotlin/App.kt", "src/test/kotlin/AppTest.kt", "build.gradle.kts", "README.md"],
 };
 
@@ -34,12 +62,20 @@ export function generateLog(task: Task, repo: Repository, run: AgentRun, now: nu
   const intro: [LogLine["level"], string][] = [
     ["info", `Sandbox ready · ${repo.language} toolchain · branch fp/${task.id}${human}`],
     run.model.startsWith("manual:")
-      ? ["info", `${run.model.slice(7)} is making this change by hand (attempt #${run.attempt}); the verification gate still applies`]
+      ? [
+          "info",
+          `${run.model.slice(7)} is making this change by hand (attempt #${run.attempt}); the verification gate still applies`,
+        ]
       : ["info", `Agent ${run.agent} (${run.model}) attempt #${run.attempt} started`],
     ["tool", `git clone ${repo.url} --branch ${repo.defaultBranch}`],
     ["info", `Loaded client context graph: 412 symbols, 37 prior changes`],
     ["info", `Plan: ${task.plan.steps.join(" → ")}`],
-    ...(run.notes ? ([["warn", `Engineer notes for this attempt: ${run.notes}`]] as [LogLine["level"], string][]) : []),
+    ...(run.notes
+      ? ([["warn", `Engineer notes for this attempt: ${run.notes}`]] as [
+          LogLine["level"],
+          string,
+        ][])
+      : []),
   ];
   const loop: [LogLine["level"], string][] = [
     ["tool", `read ${files[0]}`],
@@ -57,7 +93,10 @@ export function generateLog(task: Task, repo: Repository, run: AgentRun, now: nu
   ];
   const outro: [LogLine["level"], string][] = [
     ["info", "Self-review of diff complete; preparing hand-off to verification"],
-    [run.outcome === "verification_failed" ? "warn" : "success", "Agent finished. Handing to verification gate."],
+    [
+      run.outcome === "verification_failed" ? "warn" : "success",
+      "Agent finished. Handing to verification gate.",
+    ],
   ];
   const finished = run.outcome !== "running";
   const end = finished ? (run.durationSec ? start + run.durationSec * 1000 : now) : now;
@@ -79,7 +118,14 @@ export function generateLog(task: Task, repo: Repository, run: AgentRun, now: nu
 function hunk(oldStart: number, lines: [DiffLine["kind"], string][]): DiffLine[] {
   let o = oldStart;
   let n = oldStart;
-  const out: DiffLine[] = [{ kind: "hunk", oldNo: null, newNo: null, text: `@@ -${oldStart},${lines.length} +${oldStart},${lines.length} @@` }];
+  const out: DiffLine[] = [
+    {
+      kind: "hunk",
+      oldNo: null,
+      newNo: null,
+      text: `@@ -${oldStart},${lines.length} +${oldStart},${lines.length} @@`,
+    },
+  ];
   for (const [kind, text] of lines) {
     if (kind === "context") out.push({ kind, oldNo: o++, newNo: n++, text });
     else if (kind === "del") out.push({ kind, oldNo: o++, newNo: null, text });
@@ -108,7 +154,10 @@ export function generateDiff(task: Task, repo: Repository): DiffFile[] {
     : [
         ["context", "public Result handle(Request request) {"],
         ["del", "    var client = new LegacyClient(config.timeout());"],
-        ["add", "    var client = clientFactory.create(config.timeout(), RetryPolicy.exponential(3));"],
+        [
+          "add",
+          "    var client = clientFactory.create(config.timeout(), RetryPolicy.exponential(3));",
+        ],
         ["context", "    var response = client.send(request);"],
         ["add", "    auditLog.record(request.id(), response.status());"],
         ["context", "    return Result.from(response);"],
@@ -116,9 +165,19 @@ export function generateDiff(task: Task, repo: Repository): DiffFile[] {
       ];
   const testLines: [DiffLine["kind"], string][] = [
     ["context", ""],
-    ["add", isTs ? "it('retries on 503 then succeeds', async () => {" : "@Test void retriesOn503ThenSucceeds() {"],
+    [
+      "add",
+      isTs
+        ? "it('retries on 503 then succeeds', async () => {"
+        : "@Test void retriesOn503ThenSucceeds() {",
+    ],
     ["add", isTs ? "  mockBank.failTimes(2).thenOk();" : "    bank.failTimes(2).thenOk();"],
-    ["add", isTs ? "  expect(await confirmPayment(req)).toMatchObject({ ok: true });" : "    assertThat(handler.handle(req).ok()).isTrue();"],
+    [
+      "add",
+      isTs
+        ? "  expect(await confirmPayment(req)).toMatchObject({ ok: true });"
+        : "    assertThat(handler.handle(req).ok()).isTrue();",
+    ],
     ["add", isTs ? "});" : "}"],
   ];
   const depLines: [DiffLine["kind"], string][] =
@@ -129,9 +188,30 @@ export function generateDiff(task: Task, repo: Repository): DiffFile[] {
         ]
       : [["add", "    // no dependency changes"]];
   return [
-    { path: files[0], status: "modified", additions: mainLines.filter((l) => l[0] === "add").length, deletions: mainLines.filter((l) => l[0] === "del").length, aiAuthored: true, lines: hunk(40 + (h % 30), mainLines) },
-    { path: files[2], status: "modified", additions: testLines.filter((l) => l[0] === "add").length, deletions: 0, aiAuthored: true, lines: hunk(110, testLines) },
-    { path: files[3], status: "modified", additions: 1, deletions: depLines.filter((l) => l[0] === "del").length, aiAuthored: task.aiAuthoredPct > 50, lines: hunk(12, depLines) },
+    {
+      path: files[0],
+      status: "modified",
+      additions: mainLines.filter((l) => l[0] === "add").length,
+      deletions: mainLines.filter((l) => l[0] === "del").length,
+      aiAuthored: true,
+      lines: hunk(40 + (h % 30), mainLines),
+    },
+    {
+      path: files[2],
+      status: "modified",
+      additions: testLines.filter((l) => l[0] === "add").length,
+      deletions: 0,
+      aiAuthored: true,
+      lines: hunk(110, testLines),
+    },
+    {
+      path: files[3],
+      status: "modified",
+      additions: 1,
+      deletions: depLines.filter((l) => l[0] === "del").length,
+      aiAuthored: task.aiAuthoredPct > 50,
+      lines: hunk(12, depLines),
+    },
   ];
 }
 
@@ -144,7 +224,12 @@ export function diffStats(files: DiffFile[]) {
 }
 
 export function flakyTestsFor(repo: Repository) {
-  const names = ["CheckoutFlowTest.completesWithin2s", "SessionTest.refreshKeepsUser", "BatchJobTest.runsAtCutoff", "WebhookTest.retriesOnTimeout"];
+  const names = [
+    "CheckoutFlowTest.completesWithin2s",
+    "SessionTest.refreshKeepsUser",
+    "BatchJobTest.runsAtCutoff",
+    "WebhookTest.retriesOnTimeout",
+  ];
   return names.slice(0, repo.flakyTests).map((name, i) => ({
     name,
     failureRatePct: 4 + ((hashStr(repo.id) + i * 7) % 18),

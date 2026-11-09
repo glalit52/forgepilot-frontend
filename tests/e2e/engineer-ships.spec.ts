@@ -45,5 +45,5 @@ test("command palette opens with Ctrl+K and creates a new task", async ({ page }
   const form = page.getByRole("form", { name: "New task" });
   // Zod validation blocks an empty form.
   await form.getByRole("button", { name: "Create task" }).click();
-  await expect(form.getByText("Choose a client")).toBeVisible();
+  await expect(form.getByRole("alert").filter({ hasText: "Choose a client" })).toBeVisible();
 });

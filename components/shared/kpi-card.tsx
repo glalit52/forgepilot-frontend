@@ -28,7 +28,8 @@ export function KpiCard({
   tone?: "success" | "warning" | "danger";
   className?: string;
 }) {
-  const good = delta === undefined || delta === null || delta === 0 ? null : (delta > 0) === (goodWhen === "up");
+  const good =
+    delta === undefined || delta === null || delta === 0 ? null : delta > 0 === (goodWhen === "up");
   return (
     <Card className={cn("flex flex-col gap-2 p-4", className)}>
       <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs font-medium">
@@ -58,7 +59,11 @@ export function KpiCard({
               good === null && "text-muted-foreground",
             )}
           >
-            {delta > 0 ? <ArrowUpRightIcon className="size-3" aria-hidden /> : delta < 0 ? <ArrowDownRightIcon className="size-3" aria-hidden /> : null}
+            {delta > 0 ? (
+              <ArrowUpRightIcon className="size-3" aria-hidden />
+            ) : delta < 0 ? (
+              <ArrowDownRightIcon className="size-3" aria-hidden />
+            ) : null}
             {delta > 0 ? "+" : ""}
             {deltaLabel ?? delta}
           </span>

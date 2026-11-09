@@ -17,5 +17,7 @@ export interface ChainLink {
 
 /** Each record must point at the previous record's hash; the first at null. */
 export function verifyChain(records: ChainLink[]): boolean[] {
-  return records.map((r, i) => (i === 0 ? r.prevHash === null : r.prevHash === records[i - 1].hash));
+  return records.map((r, i) =>
+    i === 0 ? r.prevHash === null : r.prevHash === records[i - 1].hash,
+  );
 }

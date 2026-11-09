@@ -46,7 +46,9 @@ function payloadSummary(p: Record<string, unknown>) {
   if (typeof p.number === "number") parts.push(`PR #${p.number}`);
   if (p.reviewedDiff === true) parts.push("diff reviewed");
   if (typeof p.source === "string") parts.push(`from ${p.source}`);
-  ["runId", "verificationId", "prId"].forEach((k) => typeof p[k] === "string" && parts.push(String(p[k])));
+  ["runId", "verificationId", "prId"].forEach(
+    (k) => typeof p[k] === "string" && parts.push(String(p[k])),
+  );
   if (typeof p.notes === "string" && p.notes) parts.push(`“${p.notes}”`);
   if (typeof p.comment === "string" && p.comment) parts.push(`“${p.comment}”`);
   return parts.join(" · ");
@@ -62,17 +64,29 @@ export function EvidenceTimeline({
   chainValid?: boolean;
   className?: string;
 }) {
-  if (!records.length) return <EmptyState title="No evidence yet" description="Evidence appears as soon as work starts on this task." />;
+  if (!records.length)
+    return (
+      <EmptyState
+        title="No evidence yet"
+        description="Evidence appears as soon as work starts on this task."
+      />
+    );
   return (
     <div className={cn("flex flex-col gap-3", className)}>
       {chainValid !== undefined && (
         <div
           className={cn(
             "flex items-center gap-2 rounded-md px-3 py-2 text-sm",
-            chainValid ? "bg-success-soft text-success-foreground" : "bg-danger-soft text-danger-foreground",
+            chainValid
+              ? "bg-success-soft text-success-foreground"
+              : "bg-danger-soft text-danger-foreground",
           )}
         >
-          {chainValid ? <ShieldCheckIcon className="size-4" aria-hidden /> : <ShieldXIcon className="size-4" aria-hidden />}
+          {chainValid ? (
+            <ShieldCheckIcon className="size-4" aria-hidden />
+          ) : (
+            <ShieldXIcon className="size-4" aria-hidden />
+          )}
           {chainValid
             ? `Hash chain intact · ${records.length} records, each linked to the one before`
             : "Hash chain broken — a record does not link to its predecessor"}
@@ -84,7 +98,12 @@ export function EvidenceTimeline({
           const summary = payloadSummary(r.payload);
           return (
             <li key={r.id} className="relative flex gap-3 pb-5 last:pb-0">
-              {i < records.length - 1 && <span className="bg-border absolute top-7 left-3.5 h-[calc(100%-1.25rem)] w-px" aria-hidden />}
+              {i < records.length - 1 && (
+                <span
+                  className="bg-border absolute top-7 left-3.5 h-[calc(100%-1.25rem)] w-px"
+                  aria-hidden
+                />
+              )}
               <span
                 className={cn(
                   "z-10 flex size-7 shrink-0 items-center justify-center rounded-full",
@@ -102,7 +121,10 @@ export function EvidenceTimeline({
                 {summary && <p className="text-muted-foreground text-xs break-words">{summary}</p>}
                 <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 text-xs">
                   <time dateTime={r.at}>{formatDateTime(r.at)}</time>
-                  <span className="inline-flex items-center gap-1 font-mono" title={`prev ${r.prevHash ?? "∅"}`}>
+                  <span
+                    className="inline-flex items-center gap-1 font-mono"
+                    title={`prev ${r.prevHash ?? "∅"}`}
+                  >
                     {r.hashValid ? (
                       <ShieldCheckIcon className="text-success size-3" aria-label="hash verified" />
                     ) : (

@@ -47,8 +47,18 @@ export const CONSOLE_NAV: NavItem[] = [
   { href: "/console/repositories", label: "Repositories", icon: FolderGit2Icon },
   { href: "/console/ops", label: "Ops dashboard", icon: GaugeIcon, roles: ["fp_manager"] },
   { href: "/console/integrations", label: "Agents & integrations", icon: PlugIcon },
-  { href: "#agents", label: "Agents", icon: BotIcon, disabled: { reason: "Phase 2 · coming soon" } },
-  { href: "#incidents", label: "Incidents", icon: SirenIcon, disabled: { reason: "Phase 3 · coming soon" } },
+  {
+    href: "#agents",
+    label: "Agents",
+    icon: BotIcon,
+    disabled: { reason: "Phase 2 · coming soon" },
+  },
+  {
+    href: "#incidents",
+    label: "Incidents",
+    icon: SirenIcon,
+    disabled: { reason: "Phase 3 · coming soon" },
+  },
 ];
 
 /** Static labels for breadcrumb segments. Dynamic ids are labelled by pages. */

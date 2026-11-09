@@ -10,7 +10,13 @@ import { EvidenceTimeline } from "@/components/shared/evidence-timeline";
 import { HealthBreakdown } from "@/components/shared/health-breakdown";
 import { HealthPill, HealthScore } from "@/components/shared/health-score";
 import { KpiCard } from "@/components/shared/kpi-card";
-import { CriticalityBadge, MockDataBadge, SeverityBadge, SlaStatusBadge, TaskTypeBadge } from "@/components/shared/misc";
+import {
+  CriticalityBadge,
+  MockDataBadge,
+  SeverityBadge,
+  SlaStatusBadge,
+  TaskTypeBadge,
+} from "@/components/shared/misc";
 import { SlaCountdown } from "@/components/shared/sla-countdown";
 import { SlaMeter } from "@/components/shared/sla-meter";
 import { StatusBadge, VerificationBadge } from "@/components/shared/status-badge";
@@ -32,8 +38,20 @@ const ver: VerificationRun = {
   durationMin: 12,
   coveragePct: 71,
   testResults: [
-    { name: "retries on 503 with back-off", suite: "integration", status: "passed", durationMs: 840, flaky: false },
-    { name: "renders confirmation within 2s", suite: "e2e", status: "passed", durationMs: 2310, flaky: true },
+    {
+      name: "retries on 503 with back-off",
+      suite: "integration",
+      status: "passed",
+      durationMs: 840,
+      flaky: false,
+    },
+    {
+      name: "renders confirmation within 2s",
+      suite: "e2e",
+      status: "passed",
+      durationMs: 2310,
+      flaky: true,
+    },
   ],
   artifacts: [
     { kind: "screenshot", label: "Before / after", url: "#" },
@@ -42,7 +60,12 @@ const ver: VerificationRun = {
   scanners: ["Semgrep", "Trivy"],
 };
 
-const ev = (i: number, event: EvidenceItem["event"], actor: EvidenceItem["actorResolved"], payload: Record<string, unknown> = {}): EvidenceItem => ({
+const ev = (
+  i: number,
+  event: EvidenceItem["event"],
+  actor: EvidenceItem["actorResolved"],
+  payload: Record<string, unknown> = {},
+): EvidenceItem => ({
   id: `ev_${i}`,
   taskId: "task_demo",
   event,
@@ -56,9 +79,24 @@ const ev = (i: number, event: EvidenceItem["event"], actor: EvidenceItem["actorR
 });
 
 const people = {
-  kabir: { type: "person" as const, id: "u_kabir", name: "Kabir Singh", detail: "Delivery Manager" },
-  agent: { type: "agent" as const, id: "claude_code:claude-sonnet", name: "Claude Code", detail: "claude-sonnet" },
-  sys: { type: "system" as const, id: "verification-engine", name: "Verification engine", detail: "Tests + security scans" },
+  kabir: {
+    type: "person" as const,
+    id: "u_kabir",
+    name: "Kabir Singh",
+    detail: "Delivery Manager",
+  },
+  agent: {
+    type: "agent" as const,
+    id: "claude_code:claude-sonnet",
+    name: "Claude Code",
+    detail: "claude-sonnet",
+  },
+  sys: {
+    type: "system" as const,
+    id: "verification-engine",
+    name: "Verification engine",
+    detail: "Tests + security scans",
+  },
   arjun: { type: "person" as const, id: "u_arjun", name: "Arjun Rao", detail: "Senior Engineer" },
 };
 
@@ -160,8 +198,21 @@ function Specimen() {
         <SlaCountdown dueAt={SAMPLE_DUE.met} risk="met" />
       </Row>
       <div className="grid gap-3 sm:grid-cols-2">
-        <KpiCard label="SLA met" value="96.4%" delta={1.2} deltaLabel="1.2 pts" hint="target 95%" tone="success" />
-        <KpiCard label="Changes delivered" value="14" delta={3} hint="vs previous 30 days" spark={[2, 3, 1, 4, 3, 5, 4, 6]} />
+        <KpiCard
+          label="SLA met"
+          value="96.4%"
+          delta={1.2}
+          deltaLabel="1.2 pts"
+          hint="target 95%"
+          tone="success"
+        />
+        <KpiCard
+          label="Changes delivered"
+          value="14"
+          delta={3}
+          hint="vs previous 30 days"
+          spark={[2, 3, 1, 4, 3, 5, 4, 6]}
+        />
       </div>
       <Card>
         <CardContent className="flex flex-col gap-4 pt-5">
@@ -175,7 +226,16 @@ function Specimen() {
           <CardTitle>HealthBreakdown</CardTitle>
         </CardHeader>
         <CardContent>
-          <HealthBreakdown health={{ score: 72, dependencies: 68, security: 54, buildStability: 88, tests: 61, docs: 83 }} />
+          <HealthBreakdown
+            health={{
+              score: 72,
+              dependencies: 68,
+              security: 54,
+              buildStability: 88,
+              tests: 61,
+              docs: 83,
+            }}
+          />
         </CardContent>
       </Card>
       <Card>

@@ -19,7 +19,12 @@ export function TaskTypeBadge({ type }: { type: TaskType }) {
 }
 
 export function SeverityBadge({ severity }: { severity: Severity }) {
-  const tone = severity === "critical" || severity === "high" ? "danger" : severity === "medium" ? "warning" : "neutral";
+  const tone =
+    severity === "critical" || severity === "high"
+      ? "danger"
+      : severity === "medium"
+        ? "warning"
+        : "neutral";
   return <ToneBadge tone={tone}>{severity[0].toUpperCase() + severity.slice(1)}</ToneBadge>;
 }
 

@@ -21,25 +21,25 @@ pnpm dev
 
 Open <http://localhost:3000>. Pick a persona to "sign in" as:
 
-| Persona | Role | What to try |
-| --- | --- | --- |
-| Priya Shah (Acme Bank) | Client approver | **Approvals** → Approve PR #409 (2 clicks) |
-| Ravi Menon (Acme Bank) | Client admin | **Overview**, **Reports** (savings & SLA), **Settings → Integrations** |
-| Neha Kapoor (Acme Bank) | Client viewer | Read-only: there are no approve buttons |
-| Arjun Rao | ForgePilot engineer | **Tasks → "Patch OpenSSL… web image"** → Launch agent → watch the live log → tick "I reviewed the diff" → Sign off → Open PR |
-| Kabir Singh | Delivery manager | **Ops dashboard** (only managers can open it) |
+| Persona                 | Role                | What to try                                                                                                                  |
+| ----------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Priya Shah (Acme Bank)  | Client approver     | **Approvals** → Approve PR #409 (2 clicks)                                                                                   |
+| Ravi Menon (Acme Bank)  | Client admin        | **Overview**, **Reports** (savings & SLA), **Settings → Integrations**                                                       |
+| Neha Kapoor (Acme Bank) | Client viewer       | Read-only: there are no approve buttons                                                                                      |
+| Arjun Rao               | ForgePilot engineer | **Tasks → "Patch OpenSSL… web image"** → Launch agent → watch the live log → tick "I reviewed the diff" → Sign off → Open PR |
+| Kabir Singh             | Delivery manager    | **Ops dashboard** (only managers can open it)                                                                                |
 
 You can switch persona at any time from the user menu (bottom-left). The same menu has **Reset demo data**, which puts everything back to the starting story. The sign-in page also links to the onboarding wizard and the component gallery (`/dev/components`).
 
 ## Checks (what "all green" means)
 
-| Command | What it checks |
-| --- | --- |
-| `pnpm lint` | Code style and React rules (ESLint) |
-| `pnpm typecheck` | TypeScript types (strict) |
-| `pnpm test` | Unit tests: workflow rules, mock API, colour contrast (WCAG AA), components, API contract |
-| `pnpm e2e` | Browser journeys (Playwright): approver approves, engineer ships, client onboards, role guards |
-| `pnpm build` | Production build |
+| Command          | What it checks                                                                                 |
+| ---------------- | ---------------------------------------------------------------------------------------------- |
+| `pnpm lint`      | Code style and React rules (ESLint)                                                            |
+| `pnpm typecheck` | TypeScript types (strict)                                                                      |
+| `pnpm test`      | Unit tests: workflow rules, mock API, colour contrast (WCAG AA), components, API contract      |
+| `pnpm e2e`       | Browser journeys (Playwright): approver approves, engineer ships, client onboards, role guards |
+| `pnpm build`     | Production build                                                                               |
 
 ## How it's organised
 

@@ -26,7 +26,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useGitRepos, useOnboardingStatus, useSubmitOnboarding } from "@/lib/api/hooks";
 import {
   OnboardingInputSchema,
@@ -44,18 +50,64 @@ import { SeverityBadge } from "@/components/shared/misc";
 import { ErrorState } from "@/components/shared/states";
 import { cn } from "@/lib/utils";
 
-const STEPS = ["Company & contacts", "Connect Git", "Select repositories", "Map to applications", "Confirm SLA tier", "Health scan"] as const;
+const STEPS = [
+  "Company & contacts",
+  "Connect Git",
+  "Select repositories",
+  "Map to applications",
+  "Confirm SLA tier",
+  "Health scan",
+] as const;
 
 const TIERS: { tier: Tier; price: number; blurb: string; includes: string[] }[] = [
-  { tier: "maintain", price: 9000, blurb: "Keep applications patched and current.", includes: ["CVE patches within 72h", "Dependency & runtime upgrades", "Bug fixes", "Monthly savings report"] },
-  { tier: "maintain_assure", price: 12000, blurb: "Maintain plus verification of every change.", includes: ["Everything in Maintain", "Regression suite generation & upkeep", "Verification gate on your own PRs", "Evidence packs for audit"] },
-  { tier: "full_run", price: 18000, blurb: "Phase 3: production run and incident response.", includes: ["Everything in Maintain + Assure", "Alert intake & root-cause", "Remediation proposals"] },
+  {
+    tier: "maintain",
+    price: 9000,
+    blurb: "Keep applications patched and current.",
+    includes: [
+      "CVE patches within 72h",
+      "Dependency & runtime upgrades",
+      "Bug fixes",
+      "Monthly savings report",
+    ],
+  },
+  {
+    tier: "maintain_assure",
+    price: 12000,
+    blurb: "Maintain plus verification of every change.",
+    includes: [
+      "Everything in Maintain",
+      "Regression suite generation & upkeep",
+      "Verification gate on your own PRs",
+      "Evidence packs for audit",
+    ],
+  },
+  {
+    tier: "full_run",
+    price: 18000,
+    blurb: "Phase 3: production run and incident response.",
+    includes: [
+      "Everything in Maintain + Assure",
+      "Alert intake & root-cause",
+      "Remediation proposals",
+    ],
+  },
 ];
 
 type Company = OnboardingInput["company"];
 type Mapping = OnboardingInput["mapping"][number];
 
-function Field({ id, label, error, children }: { id: string; label: string; error?: string; children: React.ReactNode }) {
+function Field({
+  id,
+  label,
+  error,
+  children,
+}: {
+  id: string;
+  label: string;
+  error?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor={id}>{label}</Label>
@@ -73,9 +125,21 @@ function Stepper({ step }: { step: number }) {
   return (
     <ol className="grid grid-cols-3 gap-2 md:grid-cols-6" aria-label="Onboarding progress">
       {STEPS.map((label, i) => (
-        <li key={label} className="flex flex-col gap-1.5" aria-current={i === step ? "step" : undefined}>
-          <span className={cn("h-1 rounded-full", i <= step ? "bg-primary" : "bg-muted")} aria-hidden />
-          <span className={cn("text-xs", i === step ? "text-foreground font-medium" : "text-muted-foreground")}>
+        <li
+          key={label}
+          className="flex flex-col gap-1.5"
+          aria-current={i === step ? "step" : undefined}
+        >
+          <span
+            className={cn("h-1 rounded-full", i <= step ? "bg-primary" : "bg-muted")}
+            aria-hidden
+          />
+          <span
+            className={cn(
+              "text-xs",
+              i === step ? "text-foreground font-medium" : "text-muted-foreground",
+            )}
+          >
             <span className="tabular-nums">{i + 1}.</span> {label}
             {i < step && <span className="sr-only"> (done)</span>}
           </span>
@@ -98,7 +162,13 @@ function guessAppName(fullName: string) {
 
 export function OnboardingWizard() {
   const [step, setStep] = useState(0);
-  const [company, setCompany] = useState<Company>({ name: "", industry: "", region: "", contactName: "", contactEmail: "" });
+  const [company, setCompany] = useState<Company>({
+    name: "",
+    industry: "",
+    region: "",
+    contactName: "",
+    contactEmail: "",
+  });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [provider, setProvider] = useState<GitProvider | null>(null);
   const [account, setAccount] = useState("");
@@ -113,12 +183,15 @@ export function OnboardingWizard() {
   const repos = useGitRepos(provider ?? "github", account, connected && !!provider);
   const submit = useSubmitOnboarding();
   const status = useOnboardingStatus(orgId);
-  const selectedRepos = useMemo(() => (repos.data ?? []).filter((r) => selected.has(r.fullName)), [repos.data, selected]);
+  const selectedRepos = useMemo(
+    () => (repos.data ?? []).filter((r) => selected.has(r.fullName)),
+    [repos.data, selected],
+  );
   const gitProviders = INTEGRATION_PROVIDERS.filter((p) => p.category === "source_control");
 
   const validateCompany = () => {
     const r = OnboardingInputSchema.shape.company.safeParse(company);
-    if (r.success) return setErrors({}), true;
+    if (r.success) return (setErrors({}), true);
     const e: Record<string, string> = {};
     r.error.issues.forEach((i) => (e[String(i.path[0])] ??= i.message));
     setErrors(e);
@@ -129,7 +202,11 @@ export function OnboardingWizard() {
     setMapping((m) => {
       const next: Record<string, Mapping> = {};
       list.forEach((r) => {
-        next[r.fullName] = m[r.fullName] ?? { repoFullName: r.fullName, applicationName: guessAppName(r.fullName), criticality: "high" };
+        next[r.fullName] = m[r.fullName] ?? {
+          repoFullName: r.fullName,
+          applicationName: guessAppName(r.fullName),
+          criticality: "high",
+        };
       });
       return next;
     });
@@ -155,7 +232,10 @@ export function OnboardingWizard() {
         tier,
       };
       const parsed = OnboardingInputSchema.safeParse(input);
-      if (!parsed.success) return toast.error("Please check the earlier steps", { description: parsed.error.issues[0]?.message });
+      if (!parsed.success)
+        return toast.error("Please check the earlier steps", {
+          description: parsed.error.issues[0]?.message,
+        });
       submit.mutate(parsed.data, {
         onSuccess: (res) => {
           setOrgId(res.organizationId);
@@ -177,7 +257,8 @@ export function OnboardingWizard() {
   const inputProps = (k: keyof Company) => ({
     id: `ob-${k}`,
     value: company[k],
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => setCompany((c) => ({ ...c, [k]: e.target.value })),
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+      setCompany((c) => ({ ...c, [k]: e.target.value })),
     ...(errors[k] ? { "aria-invalid": true, "aria-describedby": `ob-${k}-err` } : {}),
   });
 
@@ -189,14 +270,23 @@ export function OnboardingWizard() {
         <Card>
           <CardHeader>
             <CardTitle>Tell us about your company</CardTitle>
-            <CardDescription>We use this to set up your workspace and send the health report.</CardDescription>
+            <CardDescription>
+              We use this to set up your workspace and send the health report.
+            </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
             <Field id="ob-name" label="Company name" error={errors.name}>
-              <Input {...inputProps("name")} placeholder="Northwind Bank" autoComplete="organization" />
+              <Input
+                {...inputProps("name")}
+                placeholder="Northwind Bank"
+                autoComplete="organization"
+              />
             </Field>
             <Field id="ob-industry" label="Industry" error={errors.industry}>
-              <Select value={company.industry} onValueChange={(v) => setCompany((c) => ({ ...c, industry: v }))}>
+              <Select
+                value={company.industry}
+                onValueChange={(v) => setCompany((c) => ({ ...c, industry: v }))}
+              >
                 <SelectTrigger id="ob-industry" aria-invalid={!!errors.industry || undefined}>
                   <SelectValue placeholder="Choose an industry" />
                 </SelectTrigger>
@@ -210,12 +300,22 @@ export function OnboardingWizard() {
               </Select>
             </Field>
             <Field id="ob-region" label="Region" error={errors.region}>
-              <Select value={company.region} onValueChange={(v) => setCompany((c) => ({ ...c, region: v }))}>
+              <Select
+                value={company.region}
+                onValueChange={(v) => setCompany((c) => ({ ...c, region: v }))}
+              >
                 <SelectTrigger id="ob-region" aria-invalid={!!errors.region || undefined}>
                   <SelectValue placeholder="Choose a region" />
                 </SelectTrigger>
                 <SelectContent>
-                  {[["IN", "India"], ["US", "United States"], ["AE", "United Arab Emirates"], ["GB", "United Kingdom"], ["EU", "European Union"], ["SG", "Singapore"]].map(([v, l]) => (
+                  {[
+                    ["IN", "India"],
+                    ["US", "United States"],
+                    ["AE", "United Arab Emirates"],
+                    ["GB", "United Kingdom"],
+                    ["EU", "European Union"],
+                    ["SG", "Singapore"],
+                  ].map(([v, l]) => (
                     <SelectItem key={v} value={v}>
                       {l}
                     </SelectItem>
@@ -228,7 +328,12 @@ export function OnboardingWizard() {
               <Input {...inputProps("contactName")} placeholder="Full name" autoComplete="name" />
             </Field>
             <Field id="ob-contactEmail" label="Contact email" error={errors.contactEmail}>
-              <Input {...inputProps("contactEmail")} type="email" placeholder="name@company.com" autoComplete="email" />
+              <Input
+                {...inputProps("contactEmail")}
+                type="email"
+                placeholder="name@company.com"
+                autoComplete="email"
+              />
             </Field>
           </CardContent>
         </Card>
@@ -239,11 +344,16 @@ export function OnboardingWizard() {
           <CardHeader>
             <CardTitle>Connect your Git provider</CardTitle>
             <CardDescription>
-              Read access to repositories, and permission to open pull requests and post checks. Code stays in your repositories; ForgePilot never merges.
+              Read access to repositories, and permission to open pull requests and post checks.
+              Code stays in your repositories; ForgePilot never merges.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" role="radiogroup" aria-label="Git provider">
+            <div
+              className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+              role="radiogroup"
+              aria-label="Git provider"
+            >
               {gitProviders.map((p) => {
                 const active = provider === p.id;
                 return (
@@ -262,7 +372,9 @@ export function OnboardingWizard() {
                       active ? "border-primary bg-accent/50" : "hover:bg-accent/30",
                     )}
                   >
-                    <span className="bg-muted flex size-9 items-center justify-center rounded-md text-xs font-semibold">{p.monogram}</span>
+                    <span className="bg-muted flex size-9 items-center justify-center rounded-md text-xs font-semibold">
+                      {p.monogram}
+                    </span>
                     <span className="font-medium">{p.name}</span>
                     <span className="text-muted-foreground text-xs">{p.description}</span>
                   </button>
@@ -277,7 +389,8 @@ export function OnboardingWizard() {
                       <CheckIcon /> Connected
                     </Badge>
                     <span className="text-sm">
-                      {gitProviders.find((p) => p.id === provider)?.name} · <span className="font-mono">{account}</span>
+                      {gitProviders.find((p) => p.id === provider)?.name} ·{" "}
+                      <span className="font-mono">{account}</span>
                     </span>
                     <Button variant="ghost" size="sm" onClick={() => setConnected(false)}>
                       Change account
@@ -287,13 +400,20 @@ export function OnboardingWizard() {
                   <>
                     <Button
                       onClick={() => {
-                        setOauthAccount(company.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
+                        setOauthAccount(
+                          company.name
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]+/g, "-")
+                            .replace(/^-|-$/g, ""),
+                        );
                         setOauthOpen(true);
                       }}
                     >
                       <GitBranchIcon /> Connect {gitProviders.find((p) => p.id === provider)?.name}
                     </Button>
-                    <span className="text-muted-foreground text-xs">Opens a mock authorization screen.</span>
+                    <span className="text-muted-foreground text-xs">
+                      Opens a mock authorization screen.
+                    </span>
                   </>
                 )}
               </div>
@@ -311,7 +431,9 @@ export function OnboardingWizard() {
         <Card>
           <CardHeader>
             <CardTitle>Select repositories</CardTitle>
-            <CardDescription>Pick the repositories ForgePilot should maintain. You can add more later.</CardDescription>
+            <CardDescription>
+              Pick the repositories ForgePilot should maintain. You can add more later.
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             {repos.error ? (
@@ -325,7 +447,13 @@ export function OnboardingWizard() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setSelected(selected.size === (repos.data?.length ?? 0) ? new Set() : new Set((repos.data ?? []).map((r) => r.fullName)))}
+                    onClick={() =>
+                      setSelected(
+                        selected.size === (repos.data?.length ?? 0)
+                          ? new Set()
+                          : new Set((repos.data ?? []).map((r) => r.fullName)),
+                      )
+                    }
                   >
                     {selected.size === (repos.data?.length ?? 0) ? "Clear all" : "Select all"}
                   </Button>
@@ -345,17 +473,30 @@ export function OnboardingWizard() {
                             setSelected(s);
                           }}
                         />
-                        <Label htmlFor={id} className="flex min-w-0 flex-1 flex-col items-start gap-0.5 font-normal">
+                        <Label
+                          htmlFor={id}
+                          className="flex min-w-0 flex-1 flex-col items-start gap-0.5 font-normal"
+                        >
                           <span className="font-mono text-sm">{r.fullName}</span>
                           <span className="text-muted-foreground text-xs">
-                            {LANGUAGE_LABEL[r.language]} · {r.defaultBranch} · pushed {formatRelative(r.lastPushAt)}
+                            {LANGUAGE_LABEL[r.language]} · {r.defaultBranch} · pushed{" "}
+                            {formatRelative(r.lastPushAt)}
                           </span>
                         </Label>
-                        {r.private && <LockIcon className="text-muted-foreground size-3.5" aria-label="private" />}
+                        {r.private && (
+                          <LockIcon
+                            className="text-muted-foreground size-3.5"
+                            aria-label="private"
+                          />
+                        )}
                       </li>
                     );
                   })}
-                  {repos.isPending && <li className="text-muted-foreground px-4 py-6 text-sm">Loading repositories…</li>}
+                  {repos.isPending && (
+                    <li className="text-muted-foreground px-4 py-6 text-sm">
+                      Loading repositories…
+                    </li>
+                  )}
                 </ul>
                 {errors.repos && (
                   <p className="text-danger-foreground text-sm" role="alert">
@@ -373,7 +514,8 @@ export function OnboardingWizard() {
           <CardHeader>
             <CardTitle>Map repositories to applications</CardTitle>
             <CardDescription>
-              Pricing and SLAs are per application. Give repositories the same application name to group them (e.g. a web app and its API).
+              Pricing and SLAs are per application. Give repositories the same application name to
+              group them (e.g. a web app and its API).
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
@@ -382,7 +524,10 @@ export function OnboardingWizard() {
               if (!m) return null;
               const key = r.fullName.replace(/\W/g, "-");
               return (
-                <div key={r.fullName} className="grid items-end gap-3 rounded-lg border p-3 md:grid-cols-[1fr_1fr_12rem]">
+                <div
+                  key={r.fullName}
+                  className="grid items-end gap-3 rounded-lg border p-3 md:grid-cols-[1fr_1fr_12rem]"
+                >
                   <div className="flex flex-col gap-0.5">
                     <span className="text-muted-foreground text-xs">Repository</span>
                     <span className="font-mono text-sm break-all">{r.fullName}</span>
@@ -391,11 +536,24 @@ export function OnboardingWizard() {
                     <Input
                       id={`map-${key}`}
                       value={m.applicationName}
-                      onChange={(e) => setMapping((s) => ({ ...s, [r.fullName]: { ...m, applicationName: e.target.value } }))}
+                      onChange={(e) =>
+                        setMapping((s) => ({
+                          ...s,
+                          [r.fullName]: { ...m, applicationName: e.target.value },
+                        }))
+                      }
                     />
                   </Field>
                   <Field id={`crit-${key}`} label="Criticality">
-                    <Select value={m.criticality} onValueChange={(v) => setMapping((s) => ({ ...s, [r.fullName]: { ...m, criticality: v as Criticality } }))}>
+                    <Select
+                      value={m.criticality}
+                      onValueChange={(v) =>
+                        setMapping((s) => ({
+                          ...s,
+                          [r.fullName]: { ...m, criticality: v as Criticality },
+                        }))
+                      }
+                    >
                       <SelectTrigger id={`crit-${key}`}>
                         <SelectValue />
                       </SelectTrigger>
@@ -412,7 +570,8 @@ export function OnboardingWizard() {
               );
             })}
             <p className="text-muted-foreground text-xs">
-              {new Set(Object.values(mapping).map((m) => m.applicationName.trim())).size} application(s) from {selectedRepos.length} repositories.
+              {new Set(Object.values(mapping).map((m) => m.applicationName.trim())).size}{" "}
+              application(s) from {selectedRepos.length} repositories.
             </p>
           </CardContent>
         </Card>
@@ -422,7 +581,8 @@ export function OnboardingWizard() {
         <div className="flex flex-col gap-4">
           <div className="grid gap-4 md:grid-cols-3" role="radiogroup" aria-label="SLA tier">
             {TIERS.map((t) => {
-              const apps = new Set(Object.values(mapping).map((m) => m.applicationName.trim())).size;
+              const apps = new Set(Object.values(mapping).map((m) => m.applicationName.trim()))
+                .size;
               const disabled = t.tier === "full_run";
               return (
                 <button
@@ -430,6 +590,7 @@ export function OnboardingWizard() {
                   type="button"
                   role="radio"
                   aria-checked={tier === t.tier}
+                  aria-label={`${TIER_LABEL[t.tier]}${disabled ? " (Phase 3, not available yet)" : ""}`}
                   aria-disabled={disabled}
                   onClick={() => !disabled && setTier(t.tier)}
                   className={cn(
@@ -440,12 +601,19 @@ export function OnboardingWizard() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-semibold">{TIER_LABEL[t.tier]}</span>
-                    {disabled ? <Badge variant="neutral">Phase 3</Badge> : tier === t.tier && <CheckIcon className="text-primary size-4" aria-hidden />}
+                    {disabled ? (
+                      <Badge variant="neutral">Phase 3</Badge>
+                    ) : (
+                      tier === t.tier && <CheckIcon className="text-primary size-4" aria-hidden />
+                    )}
                   </div>
                   <span className="text-muted-foreground text-sm">{t.blurb}</span>
                   <span className="text-lg font-semibold tabular-nums">
                     {formatUsd(t.price)}
-                    <span className="text-muted-foreground text-xs font-normal"> / application / month</span>
+                    <span className="text-muted-foreground text-xs font-normal">
+                      {" "}
+                      / application / month
+                    </span>
                   </span>
                   <ul className="flex flex-col gap-1 text-sm">
                     {t.includes.map((i) => (
@@ -457,7 +625,8 @@ export function OnboardingWizard() {
                   </ul>
                   {!disabled && (
                     <span className="text-muted-foreground border-t pt-2 text-xs">
-                      {apps} application{apps === 1 ? "" : "s"} → {formatUsd(t.price * apps)} / month (indicative)
+                      {apps} application{apps === 1 ? "" : "s"} → {formatUsd(t.price * apps)} /
+                      month (indicative)
                     </span>
                   )}
                 </button>
@@ -467,7 +636,9 @@ export function OnboardingWizard() {
           <Card>
             <CardHeader>
               <CardTitle>Standard SLA targets</CardTitle>
-              <CardDescription>Agreed in your contract; shown on your SLA report every month.</CardDescription>
+              <CardDescription>
+                Agreed in your contract; shown on your SLA report every month.
+              </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 text-sm sm:grid-cols-4">
               {[
@@ -494,7 +665,11 @@ export function OnboardingWizard() {
             <ArrowLeftIcon /> Back
           </Button>
           <Button onClick={next} disabled={submit.isPending}>
-            {step === 4 ? (submit.isPending ? "Starting scan…" : "Confirm and start health scan") : "Next"}
+            {step === 4
+              ? submit.isPending
+                ? "Starting scan…"
+                : "Confirm and start health scan"
+              : "Next"}
             <ArrowRightIcon />
           </Button>
         </div>
@@ -505,12 +680,17 @@ export function OnboardingWizard() {
           <DialogHeader>
             <DialogTitle>Authorize ForgePilot</DialogTitle>
             <DialogDescription>
-              Mock OAuth screen for {gitProviders.find((p) => p.id === provider)?.name}. In production this is the provider&apos;s own consent page.
+              Mock OAuth screen for {gitProviders.find((p) => p.id === provider)?.name}. In
+              production this is the provider&apos;s own consent page.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3">
             <Field id="oauth-account" label="Organization / account">
-              <Input id="oauth-account" value={oauthAccount} onChange={(e) => setOauthAccount(e.target.value)} />
+              <Input
+                id="oauth-account"
+                value={oauthAccount}
+                onChange={(e) => setOauthAccount(e.target.value)}
+              />
             </Field>
             <div className="rounded-md border p-3">
               <p className="mb-2 text-sm font-medium">ForgePilot will be able to:</p>
@@ -522,7 +702,9 @@ export function OnboardingWizard() {
                   </li>
                 ))}
               </ul>
-              <p className="text-muted-foreground mt-2 text-xs">ForgePilot cannot merge, change branch protection or read secrets.</p>
+              <p className="text-muted-foreground mt-2 text-xs">
+                ForgePilot cannot merge, change branch protection or read secrets.
+              </p>
             </div>
           </div>
           <DialogFooter>
@@ -556,10 +738,12 @@ function ScanStep({ status }: { status: ReturnType<typeof useOnboardingStatus> }
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <SparklesIcon className="text-primary size-4 animate-pulse" aria-hidden /> Health scan running
+            <SparklesIcon className="text-primary size-4 animate-pulse" aria-hidden /> Health scan
+            running
           </CardTitle>
           <CardDescription>
-            Scanning dependencies, security, build stability, tests and docs, and building your context graph. This takes a few seconds in the demo.
+            Scanning dependencies, security, build stability, tests and docs, and building your
+            context graph. This takes a few seconds in the demo.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -582,24 +766,33 @@ function ScanStep({ status }: { status: ReturnType<typeof useOnboardingStatus> }
       </Card>
     );
   }
-  const avg = Math.round(s.applications.reduce((a, x) => a + x.healthScore, 0) / Math.max(1, s.applications.length));
+  const avg = Math.round(
+    s.applications.reduce((a, x) => a + x.healthScore, 0) / Math.max(1, s.applications.length),
+  );
   return (
     <div className="flex flex-col gap-4" data-testid="health-report">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <CheckIcon className="text-success size-4" aria-hidden /> Health report ready · {s.organization.name}
+            <CheckIcon className="text-success size-4" aria-hidden /> Health report ready ·{" "}
+            {s.organization.name}
           </CardTitle>
-          <CardDescription>Your starting point. We re-scan weekly and you&apos;ll see the trend on your Overview.</CardDescription>
+          <CardDescription>
+            Your starting point. We re-scan weekly and you&apos;ll see the trend on your Overview.
+          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-8">
           <HealthScore score={avg} size={88} showLabel />
           <ul className="flex flex-1 flex-col gap-2">
             {s.applications.map((a) => (
-              <li key={a.id} className="flex items-center justify-between gap-2 border-b pb-2 text-sm last:border-0">
+              <li
+                key={a.id}
+                className="flex items-center justify-between gap-2 border-b pb-2 text-sm last:border-0"
+              >
                 <span className="font-medium">{a.name}</span>
                 <span className="text-muted-foreground text-xs">
-                  {a.repoCount} repo{a.repoCount === 1 ? "" : "s"} · {CRITICALITY_LABEL[a.criticality]}
+                  {a.repoCount} repo{a.repoCount === 1 ? "" : "s"} ·{" "}
+                  {CRITICALITY_LABEL[a.criticality]}
                 </span>
                 <HealthPill score={a.healthScore} />
               </li>

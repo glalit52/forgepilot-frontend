@@ -14,7 +14,9 @@ export function appendEvidence(
   const prev = chain[chain.length - 1] ?? null;
   const atIso = new Date(at).toISOString().replace(/\.\d{3}Z$/, "Z");
   const prevHash = prev?.hash ?? null;
-  const hash = fnv1a64(`${prevHash ?? ""}|${taskId}|${event}|${actor.type}:${actor.id}|${atIso}|${JSON.stringify(payload)}`);
+  const hash = fnv1a64(
+    `${prevHash ?? ""}|${taskId}|${event}|${actor.type}:${actor.id}|${atIso}|${JSON.stringify(payload)}`,
+  );
   const record: EvidenceRecord = {
     id: `ev_${taskId}_${String(chain.length).padStart(2, "0")}_${hash.slice(0, 4)}`,
     taskId,

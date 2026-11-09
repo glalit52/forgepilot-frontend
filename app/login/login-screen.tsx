@@ -22,7 +22,15 @@ const ROLE_BLURB: Record<string, string> = {
   fp_manager: "Ops dashboard: SLA, workload, margin.",
 };
 
-function PersonaButton({ p, onPick, disabled }: { p: User; onPick: () => void; disabled: boolean }) {
+function PersonaButton({
+  p,
+  onPick,
+  disabled,
+}: {
+  p: User;
+  onPick: () => void;
+  disabled: boolean;
+}) {
   return (
     <button
       onClick={onPick}
@@ -41,7 +49,10 @@ function PersonaButton({ p, onPick, disabled }: { p: User; onPick: () => void; d
         </span>
         <span className="text-muted-foreground mt-0.5 truncate text-xs">{ROLE_BLURB[p.role]}</span>
       </span>
-      <ArrowRightIcon className="text-muted-foreground size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
+      <ArrowRightIcon
+        className="text-muted-foreground size-4 transition-transform group-hover:translate-x-0.5"
+        aria-hidden
+      />
     </button>
   );
 }
@@ -51,7 +62,13 @@ export function LoginScreen() {
   const { switchTo, pending } = useSwitchAndGoHome();
   const next = useSearchParams().get("next") ?? undefined;
   const orgLabel = (id: string | null) =>
-    ({ org_acme_bank: "Acme Bank", org_shield_ins: "Shield Insurance", org_payfast: "PayFast Fintech" })[id ?? ""] ?? id ?? "";
+    ({
+      org_acme_bank: "Acme Bank",
+      org_shield_ins: "Shield Insurance",
+      org_payfast: "PayFast Fintech",
+    })[id ?? ""] ??
+    id ??
+    "";
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -63,10 +80,12 @@ export function LoginScreen() {
         <div className="flex flex-col gap-2 text-center">
           <h1 className="text-3xl font-semibold tracking-tight">Maintained. Tested. Running.</h1>
           <p className="text-muted-foreground mx-auto max-w-2xl">
-            AI agents do the work, ForgePilot engineers verify and sign off every change, and you approve and see everything in one place.
+            AI agents do the work, ForgePilot engineers verify and sign off every change, and you
+            approve and see everything in one place.
           </p>
           <p className="text-warning-foreground mx-auto mt-2 inline-flex items-center gap-1.5 text-xs">
-            <FlaskConicalIcon className="size-3.5" aria-hidden /> Mock sign-in — choose a persona. All companies and people are fictional.
+            <FlaskConicalIcon className="size-3.5" aria-hidden /> Mock sign-in — choose a persona.
+            All companies and people are fictional.
           </p>
         </div>
         {personas.error ? (
@@ -77,18 +96,35 @@ export function LoginScreen() {
               <h2 className="flex items-center gap-2 font-semibold">
                 <Building2Icon className="text-primary size-4" aria-hidden /> Client portal
               </h2>
-              <p className="text-muted-foreground -mt-1 text-sm">For your team: approvals, evidence, savings and SLAs.</p>
+              <p className="text-muted-foreground -mt-1 text-sm">
+                For your team: approvals, evidence, savings and SLAs.
+              </p>
               {personas.isPending
                 ? Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16" />)
                 : Object.entries(
                     (personas.data ?? [])
                       .filter((p) => PORTAL_ROLES.includes(p.role))
-                      .reduce<Record<string, User[]>>((acc, p) => ({ ...acc, [p.orgId ?? ""]: [...(acc[p.orgId ?? ""] ?? []), p] }), {}),
+                      .reduce<Record<string, User[]>>(
+                        (acc, p) => ({
+                          ...acc,
+                          [p.orgId ?? ""]: [...(acc[p.orgId ?? ""] ?? []), p],
+                        }),
+                        {},
+                      ),
                   ).map(([org, ps]) => (
                     <div key={org} className="flex flex-col gap-2">
-                      <span className="text-muted-foreground text-xs font-medium uppercase">{orgLabel(org)}</span>
+                      <span className="text-muted-foreground text-xs font-medium uppercase">
+                        {orgLabel(org)}
+                      </span>
                       {ps.map((p) => (
-                        <PersonaButton key={p.id} p={p} disabled={pending} onPick={() => switchTo(p.id, next?.startsWith("/portal") ? next : undefined)} />
+                        <PersonaButton
+                          key={p.id}
+                          p={p}
+                          disabled={pending}
+                          onPick={() =>
+                            switchTo(p.id, next?.startsWith("/portal") ? next : undefined)
+                          }
+                        />
                       ))}
                     </div>
                   ))}
@@ -97,13 +133,22 @@ export function LoginScreen() {
               <h2 className="flex items-center gap-2 font-semibold">
                 <WrenchIcon className="text-primary size-4" aria-hidden /> ForgePilot console
               </h2>
-              <p className="text-muted-foreground -mt-1 text-sm">For ForgePilot engineers and delivery managers.</p>
+              <p className="text-muted-foreground -mt-1 text-sm">
+                For ForgePilot engineers and delivery managers.
+              </p>
               {personas.isPending
                 ? Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16" />)
                 : (personas.data ?? [])
                     .filter((p) => !PORTAL_ROLES.includes(p.role))
                     .map((p) => (
-                      <PersonaButton key={p.id} p={p} disabled={pending} onPick={() => switchTo(p.id, next?.startsWith("/console") ? next : undefined)} />
+                      <PersonaButton
+                        key={p.id}
+                        p={p}
+                        disabled={pending}
+                        onPick={() =>
+                          switchTo(p.id, next?.startsWith("/console") ? next : undefined)
+                        }
+                      />
                     ))}
             </Card>
           </div>
@@ -118,7 +163,10 @@ export function LoginScreen() {
             Try the onboarding wizard
           </button>
           <span aria-hidden>·</span>
-          <a className="text-primary font-medium underline-offset-4 hover:underline" href="/dev/components">
+          <a
+            className="text-primary font-medium underline-offset-4 hover:underline"
+            href="/dev/components"
+          >
             Component gallery
           </a>
         </div>

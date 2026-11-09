@@ -19,7 +19,10 @@ test("engineers cannot open the portal or the ops dashboard", async ({ page }) =
 test("switching role from the user menu moves you to that role's home", async ({ page }) => {
   await signInAs(page, "u_priya");
   await page.goto("/portal");
-  await page.getByRole("button", { name: /User menu/ }).first().click();
+  await page
+    .getByRole("button", { name: /User menu/ })
+    .first()
+    .click();
   await page.getByTestId("persona-fp_manager-u_kabir").click();
   await expect(page).toHaveURL(/\/console$/);
   await expect(page.getByRole("link", { name: "Ops dashboard" })).toBeVisible();

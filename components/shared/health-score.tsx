@@ -28,7 +28,14 @@ export function HealthScore({
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const dash = (Math.max(0, Math.min(100, score)) / 100) * c;
-  const Trend = delta === undefined ? null : delta > 0 ? ArrowUpRightIcon : delta < 0 ? ArrowDownRightIcon : ArrowRightIcon;
+  const Trend =
+    delta === undefined
+      ? null
+      : delta > 0
+        ? ArrowUpRightIcon
+        : delta < 0
+          ? ArrowDownRightIcon
+          : ArrowRightIcon;
   return (
     <div
       className={cn("inline-flex items-center gap-2", className)}
@@ -37,7 +44,14 @@ export function HealthScore({
     >
       <span className="relative inline-flex" style={{ width: size, height: size }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-muted" />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            strokeWidth={stroke}
+            className="stroke-muted"
+          />
           <circle
             cx={size / 2}
             cy={size / 2}
@@ -63,7 +77,11 @@ export function HealthScore({
             <span
               className={cn(
                 "inline-flex items-center gap-0.5 text-xs tabular-nums",
-                delta! > 0 ? "text-success-foreground" : delta! < 0 ? "text-danger-foreground" : "text-muted-foreground",
+                delta! > 0
+                  ? "text-success-foreground"
+                  : delta! < 0
+                    ? "text-danger-foreground"
+                    : "text-muted-foreground",
               )}
             >
               <Trend className="size-3" aria-hidden />

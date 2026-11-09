@@ -23,7 +23,17 @@ function useBadges(area: Area) {
   return { approvals: 0, queue: needs };
 }
 
-function NavLink({ item, collapsed, count, onNavigate }: { item: NavItem; collapsed: boolean; count: number; onNavigate?: () => void }) {
+function NavLink({
+  item,
+  collapsed,
+  count,
+  onNavigate,
+}: {
+  item: NavItem;
+  collapsed: boolean;
+  count: number;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
   const Icon = item.icon;
@@ -50,16 +60,29 @@ function NavLink({ item, collapsed, count, onNavigate }: { item: NavItem; collap
   const cls = cn(
     "relative flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
     collapsed && "justify-center px-0",
-    active ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" : "text-sidebar-foreground hover:bg-sidebar-accent/60",
+    active
+      ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+      : "text-sidebar-foreground hover:bg-sidebar-accent/60",
     item.disabled && "cursor-not-allowed opacity-55 hover:bg-transparent",
   );
   const link = item.disabled ? (
-    <span className={cls} aria-disabled="true" role="link" tabIndex={0} title={item.disabled.reason}>
+    <span
+      className={cls}
+      aria-disabled="true"
+      role="link"
+      tabIndex={0}
+      title={item.disabled.reason}
+    >
       {content}
       <span className="sr-only">({item.disabled.reason})</span>
     </span>
   ) : (
-    <Link href={item.href} className={cls} aria-current={active ? "page" : undefined} onClick={onNavigate}>
+    <Link
+      href={item.href}
+      className={cls}
+      aria-current={active ? "page" : undefined}
+      onClick={onNavigate}
+    >
       {content}
     </Link>
   );
@@ -67,19 +90,32 @@ function NavLink({ item, collapsed, count, onNavigate }: { item: NavItem; collap
   return (
     <Tooltip>
       <TooltipTrigger asChild>{link}</TooltipTrigger>
-      <TooltipContent side="right">{item.disabled ? `${item.label} — ${item.disabled.reason}` : item.label}</TooltipContent>
+      <TooltipContent side="right">
+        {item.disabled ? `${item.label} — ${item.disabled.reason}` : item.label}
+      </TooltipContent>
     </Tooltip>
   );
 }
 
-export function SidebarNav({ area, collapsed = false, onNavigate }: { area: Area; collapsed?: boolean; onNavigate?: () => void }) {
+export function SidebarNav({
+  area,
+  collapsed = false,
+  onNavigate,
+}: {
+  area: Area;
+  collapsed?: boolean;
+  onNavigate?: () => void;
+}) {
   const { data: session } = useSession();
   const badges = useBadges(area);
   const items = (area === "portal" ? PORTAL_NAV : CONSOLE_NAV).filter(
     (i) => !i.roles || (session && i.roles.includes(session.user.role)),
   );
   return (
-    <nav aria-label={area === "portal" ? "Client portal" : "Console"} className="flex flex-col gap-0.5">
+    <nav
+      aria-label={area === "portal" ? "Client portal" : "Console"}
+      className="flex flex-col gap-0.5"
+    >
       {items.map((item) => (
         <NavLink
           key={item.href}
@@ -122,7 +158,12 @@ export function Sidebar({
       <div className={cn("flex-1 overflow-y-auto px-3 py-2", collapsed && "px-2")}>
         <SidebarNav area={area} collapsed={collapsed} />
       </div>
-      <div className={cn("border-sidebar-border flex flex-col gap-1 border-t p-3", collapsed && "items-center p-2")}>
+      <div
+        className={cn(
+          "border-sidebar-border flex flex-col gap-1 border-t p-3",
+          collapsed && "items-center p-2",
+        )}
+      >
         <UserMenu compact={collapsed} />
         <Button
           variant="ghost"
@@ -138,4 +179,3 @@ export function Sidebar({
     </aside>
   );
 }
-

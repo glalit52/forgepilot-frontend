@@ -16,8 +16,17 @@ describe("shared components", () => {
   it("ActorChip makes agent vs person explicit, including the model", () => {
     const { container } = render(
       <>
-        <ActorChip actor={{ type: "agent", id: "claude_code:claude-sonnet", name: "Claude Code", detail: "claude-sonnet" }} />
-        <ActorChip actor={{ type: "person", id: "u_arjun", name: "Arjun Rao", detail: "Senior Engineer" }} />
+        <ActorChip
+          actor={{
+            type: "agent",
+            id: "claude_code:claude-sonnet",
+            name: "Claude Code",
+            detail: "claude-sonnet",
+          }}
+        />
+        <ActorChip
+          actor={{ type: "person", id: "u_arjun", name: "Arjun Rao", detail: "Senior Engineer" }}
+        />
       </>,
     );
     expect(screen.getByText("Claude Code")).toBeInTheDocument();
@@ -29,7 +38,9 @@ describe("shared components", () => {
 
   it("HealthScore announces score and band", () => {
     render(<HealthScore score={64} delta={-3} />);
-    expect(screen.getByRole("img", { name: /Health score 64 of 100, At risk, down 3/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /Health score 64 of 100, At risk, down 3/ }),
+    ).toBeInTheDocument();
   });
 
   it("SlaMeter exposes value and target to assistive tech", () => {
@@ -44,14 +55,24 @@ describe("shared components", () => {
       taskId: "t",
       event,
       actor: { type: "system", id: "verification-engine" },
-      actorResolved: { type: "system", id: "verification-engine", name: "Verification engine", detail: "Tests" },
+      actorResolved: {
+        type: "system",
+        id: "verification-engine",
+        name: "Verification engine",
+        detail: "Tests",
+      },
       at: "2026-11-08T10:00:00Z",
       payload: {},
       hash: `h${i}`.padEnd(16, "0"),
       prevHash: i ? `h${i - 1}`.padEnd(16, "0") : null,
       hashValid: true,
     });
-    render(<EvidenceTimeline records={[rec(0, "task_created"), rec(1, "verification_passed")]} chainValid />);
+    render(
+      <EvidenceTimeline
+        records={[rec(0, "task_created"), rec(1, "verification_passed")]}
+        chainValid
+      />,
+    );
     expect(screen.getByText(/Hash chain intact/)).toBeInTheDocument();
     expect(screen.getByText("Verification passed")).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(2);

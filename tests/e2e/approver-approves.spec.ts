@@ -48,6 +48,8 @@ test("approvals are usable on a 390px phone", async ({ page }) => {
   await approve.click();
   await page.getByRole("dialog").getByRole("button", { name: "Confirm approval" }).click();
   await expect(page.getByText(/Approved/).first()).toBeVisible();
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > window.innerWidth + 1,
+  );
   expect(overflow).toBe(false);
 });

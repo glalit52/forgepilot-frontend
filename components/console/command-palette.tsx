@@ -30,7 +30,12 @@ import { isManager } from "@/lib/domain/roles";
 import { useSwitchAndGoHome } from "@/components/shell/use-switch-persona";
 import { useConsoleUI } from "./console-ui";
 
-const ICON = { client: Building2Icon, application: AppWindowIcon, repository: FolderGit2Icon, task: ListTodoIcon };
+const ICON = {
+  client: Building2Icon,
+  application: AppWindowIcon,
+  repository: FolderGit2Icon,
+  task: ListTodoIcon,
+};
 
 /** Cmd/Ctrl+K: navigate to client/app/task, new task, launch agent, open approvals, switch role (dev). */
 export function CommandPalette() {
@@ -70,7 +75,13 @@ export function CommandPalette() {
         <SearchIcon /> Search or run a command…
         <kbd className="bg-muted ml-auto rounded px-1.5 font-mono text-[10px]">⌘K</kbd>
       </Button>
-      <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setOpen(true)} aria-label="Open command palette">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="md:hidden"
+        onClick={() => setOpen(true)}
+        aria-label="Open command palette"
+      >
         <SearchIcon />
       </Button>
       <CommandDialog open={open} onOpenChange={setOpen}>
@@ -87,11 +98,18 @@ export function CommandPalette() {
             >
               <PlusIcon /> New task
             </CommandItem>
-            <CommandItem value="open approvals review queue awaiting" onSelect={() => go("/console/tasks?state=awaiting_review")}>
+            <CommandItem
+              value="open approvals review queue awaiting"
+              onSelect={() => go("/console/tasks?state=awaiting_review")}
+            >
               <CheckSquareIcon /> Open review queue (awaiting sign-off)
             </CommandItem>
             {(launchable.data ?? []).map((t) => (
-              <CommandItem key={`launch-${t.id}`} value={`launch agent ${t.title} ${t.id}`} onSelect={() => go(`/console/tasks/${t.id}?launch=1`)}>
+              <CommandItem
+                key={`launch-${t.id}`}
+                value={`launch agent ${t.title} ${t.id}`}
+                onSelect={() => go(`/console/tasks/${t.id}?launch=1`)}
+              >
                 <PlayIcon /> Launch agent on: {t.title}
                 <span className="text-muted-foreground ml-auto text-xs">{t.organizationName}</span>
               </CommandItem>
@@ -99,12 +117,22 @@ export function CommandPalette() {
           </CommandGroup>
           <CommandSeparator />
           <CommandGroup heading="Go to">
-            <CommandItem value="go my queue" onSelect={() => go("/console")}><InboxIcon /> My queue</CommandItem>
-            <CommandItem value="go tasks" onSelect={() => go("/console/tasks")}><ListTodoIcon /> Tasks</CommandItem>
-            <CommandItem value="go clients" onSelect={() => go("/console/clients")}><Building2Icon /> Clients</CommandItem>
-            <CommandItem value="go repositories" onSelect={() => go("/console/repositories")}><FolderGit2Icon /> Repositories</CommandItem>
+            <CommandItem value="go my queue" onSelect={() => go("/console")}>
+              <InboxIcon /> My queue
+            </CommandItem>
+            <CommandItem value="go tasks" onSelect={() => go("/console/tasks")}>
+              <ListTodoIcon /> Tasks
+            </CommandItem>
+            <CommandItem value="go clients" onSelect={() => go("/console/clients")}>
+              <Building2Icon /> Clients
+            </CommandItem>
+            <CommandItem value="go repositories" onSelect={() => go("/console/repositories")}>
+              <FolderGit2Icon /> Repositories
+            </CommandItem>
             {session && isManager(session.user.role) && (
-              <CommandItem value="go ops dashboard" onSelect={() => go("/console/ops")}><GaugeIcon /> Ops dashboard</CommandItem>
+              <CommandItem value="go ops dashboard" onSelect={() => go("/console/ops")}>
+                <GaugeIcon /> Ops dashboard
+              </CommandItem>
             )}
           </CommandGroup>
           <CommandSeparator />
@@ -113,12 +141,28 @@ export function CommandPalette() {
             if (!rows.length) return null;
             const Icon = ICON[kind];
             return (
-              <CommandGroup key={kind} heading={{ client: "Clients", application: "Applications", repository: "Repositories", task: "Tasks" }[kind]}>
+              <CommandGroup
+                key={kind}
+                heading={
+                  {
+                    client: "Clients",
+                    application: "Applications",
+                    repository: "Repositories",
+                    task: "Tasks",
+                  }[kind]
+                }
+              >
                 {rows.map((r) => (
-                  <CommandItem key={`${kind}-${r.id}`} value={`${kind} ${r.title} ${r.subtitle} ${r.id}`} onSelect={() => go(r.href)}>
+                  <CommandItem
+                    key={`${kind}-${r.id}`}
+                    value={`${kind} ${r.title} ${r.subtitle} ${r.id}`}
+                    onSelect={() => go(r.href)}
+                  >
                     <Icon />
                     <span className="truncate">{r.title}</span>
-                    <span className="text-muted-foreground ml-auto truncate text-xs">{r.subtitle}</span>
+                    <span className="text-muted-foreground ml-auto truncate text-xs">
+                      {r.subtitle}
+                    </span>
                   </CommandItem>
                 ))}
               </CommandGroup>
@@ -138,7 +182,9 @@ export function CommandPalette() {
                     }}
                   >
                     <UserCogIcon /> {p.name}
-                    <span className="text-muted-foreground ml-auto text-xs">{ROLE_LABEL[p.role]}</span>
+                    <span className="text-muted-foreground ml-auto text-xs">
+                      {ROLE_LABEL[p.role]}
+                    </span>
                   </CommandItem>
                 ))}
               </CommandGroup>

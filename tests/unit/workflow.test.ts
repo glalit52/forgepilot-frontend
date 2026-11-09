@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { availableActions, canShip, checkAction, nextStateAfterVerification } from "@/lib/domain/workflow";
+import {
+  availableActions,
+  canShip,
+  checkAction,
+  nextStateAfterVerification,
+} from "@/lib/domain/workflow";
 import { canAccessPath, homeForRole } from "@/lib/domain/roles";
 import { taskSlaRisk } from "@/lib/domain/sla";
 import { fnv1a64, verifyChain } from "@/lib/domain/hash";
@@ -7,31 +12,57 @@ import { healthBand } from "@/lib/domain/status";
 
 describe("workflow rules", () => {
   it("blocks sign-off unless verification passed", () => {
-    const r = checkAction("sign_off", { state: "awaiting_review", latestVerification: { status: "failed" }, reviewedDiff: true });
+    const r = checkAction("sign_off", {
+      state: "awaiting_review",
+      latestVerification: { status: "failed" },
+      reviewedDiff: true,
+    });
     expect(r.allowed).toBe(false);
     expect(r.reason).toMatch(/Verification must pass/);
   });
   it('blocks sign-off unless "I reviewed the diff" is ticked', () => {
-    const r = checkAction("sign_off", { state: "awaiting_review", latestVerification: { status: "passed" }, reviewedDiff: false });
+    const r = checkAction("sign_off", {
+      state: "awaiting_review",
+      latestVerification: { status: "passed" },
+      reviewedDiff: false,
+    });
     expect(r.allowed).toBe(false);
     expect(r.reason).toMatch(/reviewed the diff/);
   });
   it("allows sign-off when verified and reviewed", () => {
-    expect(checkAction("sign_off", { state: "awaiting_review", latestVerification: { status: "passed" }, reviewedDiff: true }).allowed).toBe(true);
+    expect(
+      checkAction("sign_off", {
+        state: "awaiting_review",
+        latestVerification: { status: "passed" },
+        reviewedDiff: true,
+      }).allowed,
+    ).toBe(true);
   });
   it("only allows opening a PR after sign-off", () => {
-    expect(checkAction("open_pr", { state: "awaiting_review", latestVerification: { status: "passed" } }).allowed).toBe(false);
-    expect(checkAction("open_pr", { state: "signed_off", latestVerification: { status: "passed" } }).allowed).toBe(true);
+    expect(
+      checkAction("open_pr", { state: "awaiting_review", latestVerification: { status: "passed" } })
+        .allowed,
+    ).toBe(false);
+    expect(
+      checkAction("open_pr", { state: "signed_off", latestVerification: { status: "passed" } })
+        .allowed,
+    ).toBe(true);
   });
   it("only launches from an approved plan", () => {
-    expect(availableActions({ state: "planned", latestVerification: null })).not.toContain("launch");
-    expect(availableActions({ state: "plan_approved", latestVerification: null })).toContain("launch");
+    expect(availableActions({ state: "planned", latestVerification: null })).not.toContain(
+      "launch",
+    );
+    expect(availableActions({ state: "plan_approved", latestVerification: null })).toContain(
+      "launch",
+    );
   });
   it("never offers merge or ship without verification and sign-off", () => {
     expect(canShip("signed_off", true, true)).toBe(true);
     expect(canShip("signed_off", false, true)).toBe(false);
     expect(canShip("awaiting_review", true, false)).toBe(false);
-    expect(availableActions({ state: "pr_open", latestVerification: { status: "passed" } })).not.toContain("open_pr");
+    expect(
+      availableActions({ state: "pr_open", latestVerification: { status: "passed" } }),
+    ).not.toContain("open_pr");
   });
   it("retries up to 3 attempts then escalates", () => {
     expect(nextStateAfterVerification(true, 1)).toBe("awaiting_review");
@@ -65,7 +96,9 @@ describe("SLA risk", () => {
   });
   it("judges delivered work by when the PR opened", () => {
     expect(taskSlaRisk("merged", "2026-11-05T00:00:00Z", now, "2026-11-04T00:00:00Z")).toBe("met");
-    expect(taskSlaRisk("merged", "2026-11-05T00:00:00Z", now, "2026-11-06T00:00:00Z")).toBe("missed");
+    expect(taskSlaRisk("merged", "2026-11-05T00:00:00Z", now, "2026-11-06T00:00:00Z")).toBe(
+      "missed",
+    );
   });
 });
 
@@ -76,8 +109,18 @@ describe("evidence hash chain", () => {
     expect(fnv1a64("x")).toHaveLength(16);
   });
   it("detects a broken link", () => {
-    expect(verifyChain([{ hash: "a", prevHash: null }, { hash: "b", prevHash: "a" }])).toEqual([true, true]);
-    expect(verifyChain([{ hash: "a", prevHash: null }, { hash: "b", prevHash: "z" }])).toEqual([true, false]);
+    expect(
+      verifyChain([
+        { hash: "a", prevHash: null },
+        { hash: "b", prevHash: "a" },
+      ]),
+    ).toEqual([true, true]);
+    expect(
+      verifyChain([
+        { hash: "a", prevHash: null },
+        { hash: "b", prevHash: "z" },
+      ]),
+    ).toEqual([true, false]);
   });
 });
 

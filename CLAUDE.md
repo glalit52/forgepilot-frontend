@@ -12,10 +12,10 @@ Full product context: `docs/PRD.md`. Screen-by-screen spec: `docs/frontend-spec.
 
 The **web frontend** for Phase 1 ("Assure": Maintain + Verify). One Next.js app with two areas:
 
-| Area | Route prefix | Who uses it |
-| --- | --- | --- |
-| Client portal | `/portal` | Client buyer, client approver, client compliance |
-| Internal console | `/console` | ForgePilot engineers and delivery managers |
+| Area             | Route prefix | Who uses it                                      |
+| ---------------- | ------------ | ------------------------------------------------ |
+| Client portal    | `/portal`    | Client buyer, client approver, client compliance |
+| Internal console | `/console`   | ForgePilot engineers and delivery managers       |
 
 There is **no backend yet**. Build against typed mock data (`mocks/mock-data.json`) behind a small API layer so the real API can replace it later without touching UI components.
 

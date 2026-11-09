@@ -13,7 +13,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useClients, useCreateTask, useEngineers, useRepositories } from "@/lib/api/hooks";
 import { NewTaskInputSchema, type NewTaskInput } from "@/lib/schemas";
@@ -89,7 +95,10 @@ export function NewTaskDialog({
       type: d.type,
       title: d.title,
       description: d.description,
-      acceptanceCriteria: d.criteria.split("\n").map((s) => s.trim()).filter(Boolean),
+      acceptanceCriteria: d.criteria
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean),
       agent: d.agent,
       priority: d.priority,
       assigneeUserId: d.assigneeUserId || null,
@@ -115,7 +124,8 @@ export function NewTaskDialog({
   };
 
   const err = (k: string) => errors[k];
-  const aria = (k: string) => (err(k) ? { "aria-invalid": true, "aria-describedby": `nt-${k}-err` } : {});
+  const aria = (k: string) =>
+    err(k) ? { "aria-invalid": true, "aria-describedby": `nt-${k}-err` } : {};
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -123,13 +133,22 @@ export function NewTaskDialog({
         <DialogHeader>
           <DialogTitle>New task</DialogTitle>
           <DialogDescription>
-            The agent works in a sandbox on a branch. Nothing reaches the client until verification passes and you sign off.
+            The agent works in a sandbox on a branch. Nothing reaches the client until verification
+            passes and you sign off.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit} noValidate className="grid gap-4 sm:grid-cols-2" aria-label="New task">
+        <form
+          onSubmit={submit}
+          noValidate
+          className="grid gap-4 sm:grid-cols-2"
+          aria-label="New task"
+        >
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="nt-org">Client</Label>
-            <Select value={d.orgId} onValueChange={(v) => setD((s) => ({ ...s, orgId: v, repositoryId: "" }))}>
+            <Select
+              value={d.orgId}
+              onValueChange={(v) => setD((s) => ({ ...s, orgId: v, repositoryId: "" }))}
+            >
               <SelectTrigger id="nt-org" {...aria("orgId")}>
                 <SelectValue placeholder="Choose a client" />
               </SelectTrigger>
@@ -145,9 +164,15 @@ export function NewTaskDialog({
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="nt-repo">Repository</Label>
-            <Select value={d.repositoryId} onValueChange={(v) => set("repositoryId", v)} disabled={!d.orgId}>
+            <Select
+              value={d.repositoryId}
+              onValueChange={(v) => set("repositoryId", v)}
+              disabled={!d.orgId}
+            >
               <SelectTrigger id="nt-repo" {...aria("repositoryId")}>
-                <SelectValue placeholder={d.orgId ? "Choose a repository" : "Choose a client first"} />
+                <SelectValue
+                  placeholder={d.orgId ? "Choose a repository" : "Choose a client first"}
+                />
               </SelectTrigger>
               <SelectContent>
                 {(repos.data ?? []).map((r) => (
@@ -176,7 +201,10 @@ export function NewTaskDialog({
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="nt-priority">Priority</Label>
-            <Select value={d.priority} onValueChange={(v) => set("priority", v as Draft["priority"])}>
+            <Select
+              value={d.priority}
+              onValueChange={(v) => set("priority", v as Draft["priority"])}
+            >
               <SelectTrigger id="nt-priority">
                 <SelectValue />
               </SelectTrigger>
@@ -191,17 +219,35 @@ export function NewTaskDialog({
           </div>
           <div className="flex flex-col gap-1.5 sm:col-span-2">
             <Label htmlFor="nt-title">Title</Label>
-            <Input id="nt-title" value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Patch CVE-2026-1182 in base image" {...aria("title")} />
+            <Input
+              id="nt-title"
+              value={d.title}
+              onChange={(e) => set("title", e.target.value)}
+              placeholder="e.g. Patch CVE-2026-1182 in base image"
+              {...aria("title")}
+            />
             <FieldError id="nt-title-err" msg={err("title")} />
           </div>
           <div className="flex flex-col gap-1.5 sm:col-span-2">
             <Label htmlFor="nt-desc">Description (plain English for the client)</Label>
-            <Textarea id="nt-desc" value={d.description} onChange={(e) => set("description", e.target.value)} rows={3} {...aria("description")} />
+            <Textarea
+              id="nt-desc"
+              value={d.description}
+              onChange={(e) => set("description", e.target.value)}
+              rows={3}
+              {...aria("description")}
+            />
             <FieldError id="nt-description-err" msg={err("description")} />
           </div>
           <div className="flex flex-col gap-1.5 sm:col-span-2">
             <Label htmlFor="nt-ac">Acceptance criteria (one per line)</Label>
-            <Textarea id="nt-ac" value={d.criteria} onChange={(e) => set("criteria", e.target.value)} rows={3} {...aria("acceptanceCriteria")} />
+            <Textarea
+              id="nt-ac"
+              value={d.criteria}
+              onChange={(e) => set("criteria", e.target.value)}
+              rows={3}
+              {...aria("acceptanceCriteria")}
+            />
             <FieldError id="nt-acceptanceCriteria-err" msg={err("acceptanceCriteria")} />
           </div>
           <div className="flex flex-col gap-1.5">
@@ -221,7 +267,10 @@ export function NewTaskDialog({
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="nt-assignee">Assignee</Label>
-            <Select value={d.assigneeUserId || "__me"} onValueChange={(v) => set("assigneeUserId", v === "__me" ? "" : v)}>
+            <Select
+              value={d.assigneeUserId || "__me"}
+              onValueChange={(v) => set("assigneeUserId", v === "__me" ? "" : v)}
+            >
               <SelectTrigger id="nt-assignee">
                 <SelectValue />
               </SelectTrigger>

@@ -139,7 +139,9 @@ function person(u: User) {
 
 function taskDetail(ctx: Ctx, task: Task) {
   const { db, now } = ctx;
-  const runs = db.agentRuns.filter((r) => r.taskId === task.id).sort((a, b) => a.attempt - b.attempt);
+  const runs = db.agentRuns
+    .filter((r) => r.taskId === task.id)
+    .sort((a, b) => a.attempt - b.attempt);
   const runIds = new Set(runs.map((r) => r.id));
   const { items, chainValid } = evidenceFor(db, task.id);
   return {
@@ -180,7 +182,8 @@ function filterTasks(ctx: Ctx, tasks: Task[]) {
 function startRun(ctx: Ctx, task: Task, opts: { notes?: string; simulateFailure?: boolean }) {
   const { db, now } = ctx;
   const attempts = db.agentRuns.filter((r) => r.taskId === task.id).length;
-  const model = task.agent === "claude_code" ? "claude-sonnet" : task.agent === "codex" ? "gpt-codex" : "devin";
+  const model =
+    task.agent === "claude_code" ? "claude-sonnet" : task.agent === "codex" ? "gpt-codex" : "devin";
   const run = {
     id: `run_${task.id}_${attempts + 1}`,
     taskId: task.id,
@@ -198,7 +201,14 @@ function startRun(ctx: Ctx, task: Task, opts: { notes?: string; simulateFailure?
   };
   db.agentRuns.push(run);
   task.state = "running";
-  appendEvidence(db, task.id, "agent_run_started", { type: "agent", id: `${task.agent}:${model}` }, { runId: run.id, attempt: run.attempt, ...(opts.notes ? { notes: opts.notes } : {}) }, now);
+  appendEvidence(
+    db,
+    task.id,
+    "agent_run_started",
+    { type: "agent", id: `${task.agent}:${model}` },
+    { runId: run.id, attempt: run.attempt, ...(opts.notes ? { notes: opts.notes } : {}) },
+    now,
+  );
   return run;
 }
 
@@ -209,7 +219,8 @@ export const routes: RouteDef[] = [
     method: "GET",
     path: "/session",
     auth: "any",
-    summary: "Current mock session (user, organization) and the personas available in the role switcher.",
+    summary:
+      "Current mock session (user, organization) and the personas available in the role switcher.",
     response: SessionSchema,
     handler: (ctx) => {
       const user = requireUser(ctx);
@@ -292,7 +303,8 @@ export const routes: RouteDef[] = [
     response: ApplicationDetailSchema,
     handler: (ctx) => {
       const app = ctx.db.applications.find((a) => a.id === ctx.params.id);
-      if (!app || !visibleOrgIds(ctx).includes(app.orgId)) throw new HttpError(404, "Application not found");
+      if (!app || !visibleOrgIds(ctx).includes(app.orgId))
+        throw new HttpError(404, "Application not found");
       const repos = ctx.db.repositories.filter((r) => r.applicationId === app.id);
       const sev = { critical: 0, high: 1, medium: 2, low: 3 } as const;
       return {
@@ -304,7 +316,10 @@ export const routes: RouteDef[] = [
         repositories: repos,
         findings: ctx.db.findings
           .filter((f) => repos.some((r) => r.id === f.repositoryId))
-          .map((f) => ({ ...f, repositoryName: repoName(repos.find((r) => r.id === f.repositoryId)!.url) }))
+          .map((f) => ({
+            ...f,
+            repositoryName: repoName(repos.find((r) => r.id === f.repositoryId)!.url),
+          }))
           .sort((a, b) => sev[a.severity] - sev[b.severity]),
         tasks: ctx.db.tasks
           .filter((t) => t.applicationId === app.id)
@@ -327,7 +342,10 @@ export const routes: RouteDef[] = [
         .map((r) => repositorySummary(ctx.db, r.id))
         .filter((r) => orgs.includes(r.organizationId))
         .filter((r) => !ctx.query.get("orgId") || r.organizationId === ctx.query.get("orgId"))
-        .filter((r) => !ctx.query.get("applicationId") || r.applicationId === ctx.query.get("applicationId"));
+        .filter(
+          (r) =>
+            !ctx.query.get("applicationId") || r.applicationId === ctx.query.get("applicationId"),
+        );
     },
   },
   {
@@ -340,14 +358,17 @@ export const routes: RouteDef[] = [
       const repo = ctx.db.repositories.find((r) => r.id === ctx.params.id);
       if (!repo) throw new HttpError(404, "Repository not found");
       const summary = repositorySummary(ctx.db, repo.id);
-      if (!visibleOrgIds(ctx).includes(summary.organizationId)) throw new HttpError(404, "Repository not found");
+      if (!visibleOrgIds(ctx).includes(summary.organizationId))
+        throw new HttpError(404, "Repository not found");
       return {
         repository: summary,
         findings: ctx.db.findings.filter((f) => f.repositoryId === repo.id),
         scans: ctx.db.scans
           .filter((s) => s.repositoryId === repo.id)
           .sort((a, b) => b.startedAt.localeCompare(a.startedAt)),
-        tasks: ctx.db.tasks.filter((t) => t.repositoryId === repo.id).map((t) => taskListItem(ctx.db, t, ctx.now)),
+        tasks: ctx.db.tasks
+          .filter((t) => t.repositoryId === repo.id)
+          .map((t) => taskListItem(ctx.db, t, ctx.now)),
         flakyTests: flakyTestsFor(repo),
       };
     },
@@ -361,7 +382,9 @@ export const routes: RouteDef[] = [
     handler: (ctx) => {
       const repo = ctx.db.repositories.find((r) => r.id === ctx.params.id);
       if (!repo) throw new HttpError(404, "Repository not found");
-      const running = ctx.db.scans.find((s) => s.repositoryId === repo.id && s.status === "running");
+      const running = ctx.db.scans.find(
+        (s) => s.repositoryId === repo.id && s.status === "running",
+      );
       if (running) return { scanId: running.id };
       const scan = {
         id: newId("scan"),
@@ -384,11 +407,15 @@ export const routes: RouteDef[] = [
     method: "GET",
     path: "/tasks",
     auth: "any",
-    summary: "Tasks visible to the user. Filters: orgId, applicationId, repositoryId, type, state, assigneeUserId, agent, from, to, mine.",
+    summary:
+      "Tasks visible to the user. Filters: orgId, applicationId, repositoryId, type, state, assigneeUserId, agent, from, to, mine.",
     response: z.array(TaskListItemSchema),
     handler: (ctx) => {
       const orgs = visibleOrgIds(ctx);
-      return filterTasks(ctx, ctx.db.tasks.filter((t) => orgs.includes(t.orgId)))
+      return filterTasks(
+        ctx,
+        ctx.db.tasks.filter((t) => orgs.includes(t.orgId)),
+      )
         .map((t) => taskListItem(ctx.db, t, ctx.now))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     },
@@ -405,7 +432,8 @@ export const routes: RouteDef[] = [
       const input = parseBody(NewTaskInputSchema, ctx.body);
       const repo = ctx.db.repositories.find((r) => r.id === input.repositoryId);
       const app = repo && ctx.db.applications.find((a) => a.id === repo.applicationId);
-      if (!repo || !app || app.orgId !== input.orgId) throw new HttpError(422, "Repository does not belong to that client");
+      if (!repo || !app || app.orgId !== input.orgId)
+        throw new HttpError(422, "Repository does not belong to that client");
       const n = ctx.db.tasks.length + 1;
       const id = `task_${String(n).padStart(3, "0")}_${Date.now().toString(36).slice(-4)}`;
       const hoursToSla = input.priority === "p0" ? 72 : input.priority === "p1" ? 120 : 240;
@@ -426,14 +454,32 @@ export const routes: RouteDef[] = [
         createdAt: toIso(ctx.now),
         aiAuthoredPct: 0,
         plan: {
-          steps: ["Analyse affected modules", "Apply change", "Update or add tests", "Run verification"],
+          steps: [
+            "Analyse affected modules",
+            "Apply change",
+            "Update or add tests",
+            "Run verification",
+          ],
           acceptanceCriteria: input.acceptanceCriteria,
           approvedBy: null,
         },
-        estimatedHours: { cve_patch: 36, dependency_upgrade: 180, bug_fix: 56, enhancement: 110, test_coverage: 80 }[input.type],
+        estimatedHours: {
+          cve_patch: 36,
+          dependency_upgrade: 180,
+          bug_fix: 56,
+          enhancement: 110,
+          test_coverage: 80,
+        }[input.type],
       };
       ctx.db.tasks.push(task);
-      appendEvidence(ctx.db, id, "task_created", person(user), { source: task.source.ref, type: TASK_TYPE_LABEL[task.type] }, ctx.now);
+      appendEvidence(
+        ctx.db,
+        id,
+        "task_created",
+        person(user),
+        { source: task.source.ref, type: TASK_TYPE_LABEL[task.type] },
+        ctx.now,
+      );
       return taskListItem(ctx.db, task, ctx.now);
     },
   },
@@ -459,8 +505,12 @@ export const routes: RouteDef[] = [
       const lines = generateLog(task, repo, run, ctx.now);
       const start = Date.parse(run.startedAt);
       const end = run.simulatedEndsAt ?? start + (run.durationSec ?? 0) * 1000;
-      const progressPct = run.outcome === "running" ? Math.min(99, Math.round(((ctx.now - start) / Math.max(1, end - start)) * 100)) : 100;
-      const status = run.outcome === "running" ? "running" : task.state === "verifying" ? "verifying" : "done";
+      const progressPct =
+        run.outcome === "running"
+          ? Math.min(99, Math.round(((ctx.now - start) / Math.max(1, end - start)) * 100))
+          : 100;
+      const status =
+        run.outcome === "running" ? "running" : task.state === "verifying" ? "verifying" : "done";
       return { runId: run.id, status, lines, progressPct };
     },
   },
@@ -473,14 +523,18 @@ export const routes: RouteDef[] = [
     handler: (ctx) => {
       const task = findTask(ctx, ctx.params.id);
       if (!latestRun(ctx.db, task.id)) return [];
-      return generateDiff(task, ctx.db.repositories.find((r) => r.id === task.repositoryId)!);
+      return generateDiff(
+        task,
+        ctx.db.repositories.find((r) => r.id === task.repositoryId)!,
+      );
     },
   },
   {
     method: "POST",
     path: "/tasks/:id/actions",
     auth: "console",
-    summary: "Engineer actions: save_plan, approve_plan, launch, stop, retry, take_over, sign_off, open_pr, escalate, close. Each writes an EvidenceRecord.",
+    summary:
+      "Engineer actions: save_plan, approve_plan, launch, stop, retry, take_over, sign_off, open_pr, escalate, close. Each writes an EvidenceRecord.",
     request: TaskActionInputSchema,
     response: TaskDetailSchema,
     handler: (ctx) => {
@@ -501,7 +555,14 @@ export const routes: RouteDef[] = [
           if (!input.plan) throw new HttpError(422, "plan is required");
           task.plan = { ...input.plan, approvedBy: null };
           if (task.state === "created" || task.state === "plan_approved") task.state = "planned";
-          appendEvidence(db, task.id, "plan_updated", me, { steps: input.plan.steps.length, criteria: input.plan.acceptanceCriteria.length }, now);
+          appendEvidence(
+            db,
+            task.id,
+            "plan_updated",
+            me,
+            { steps: input.plan.steps.length, criteria: input.plan.acceptanceCriteria.length },
+            now,
+          );
           break;
         }
         case "approve_plan":
@@ -520,12 +581,20 @@ export const routes: RouteDef[] = [
             delete run.simulatedEndsAt;
           }
           task.state = "plan_approved";
-          appendEvidence(db, task.id, "agent_run_stopped", me, { runId: run?.id, notes: input.notes ?? "" }, now);
+          appendEvidence(
+            db,
+            task.id,
+            "agent_run_stopped",
+            me,
+            { runId: run?.id, notes: input.notes ?? "" },
+            now,
+          );
           break;
         }
         case "retry": {
           const attempts = db.agentRuns.filter((r) => r.taskId === task.id).length;
-          if (attempts >= MAX_ATTEMPTS + 2) throw new HttpError(409, "Too many attempts; take over manually.");
+          if (attempts >= MAX_ATTEMPTS + 2)
+            throw new HttpError(409, "Too many attempts; take over manually.");
           appendEvidence(db, task.id, "retry_requested", me, { notes: input.notes ?? "" }, now);
           startRun(ctx, task, { notes: input.notes, simulateFailure: input.simulateFailure });
           break;
@@ -560,7 +629,14 @@ export const routes: RouteDef[] = [
           break;
         }
         case "sign_off":
-          appendEvidence(db, task.id, "engineer_signed_off", me, { reviewedDiff: true, verificationId: item.latestVerification?.id }, now);
+          appendEvidence(
+            db,
+            task.id,
+            "engineer_signed_off",
+            me,
+            { reviewedDiff: true, verificationId: item.latestVerification?.id },
+            now,
+          );
           task.state = "signed_off";
           break;
         case "open_pr": {
@@ -579,7 +655,14 @@ export const routes: RouteDef[] = [
           db.pullRequests.push(pr);
           if (!task.aiAuthoredPct) task.aiAuthoredPct = pr.aiAuthoredPct;
           task.state = "pr_open";
-          appendEvidence(db, task.id, "pr_opened", { type: "system", id: "forgepilot" }, { prId: pr.id, number, openedBy: user.id }, now);
+          appendEvidence(
+            db,
+            task.id,
+            "pr_opened",
+            { type: "system", id: "forgepilot" },
+            { prId: pr.id, number, openedBy: user.id },
+            now,
+          );
           db.notifications.unshift({
             id: newId("ntf"),
             audience: "portal",
@@ -609,14 +692,17 @@ export const routes: RouteDef[] = [
     method: "POST",
     path: "/tasks/:id/approval",
     auth: "portal",
-    summary: "Client approves or requests changes on an open PR. Approvers/admins only. Appends an EvidenceRecord.",
+    summary:
+      "Client approves or requests changes on an open PR. Approvers/admins only. Appends an EvidenceRecord.",
     request: ApprovalInputSchema,
     response: TaskDetailSchema,
     handler: (ctx) => {
       const user = requireUser(ctx);
-      if (!canApprove(user.role)) throw new HttpError(403, "Your role can view but not approve changes");
+      if (!canApprove(user.role))
+        throw new HttpError(403, "Your role can view but not approve changes");
       const task = findTask(ctx, ctx.params.id);
-      if (task.state !== "pr_open") throw new HttpError(409, "This change is not waiting for approval");
+      if (task.state !== "pr_open")
+        throw new HttpError(409, "This change is not waiting for approval");
       const input = parseBody(ApprovalInputSchema, ctx.body);
       ctx.db.approvals.push({
         id: newId("apr"),
@@ -628,10 +714,24 @@ export const routes: RouteDef[] = [
       });
       if (input.decision === "approved") {
         task.state = "client_approved";
-        appendEvidence(ctx.db, task.id, "client_approved", person(user), { comment: input.comment ?? "" }, ctx.now);
+        appendEvidence(
+          ctx.db,
+          task.id,
+          "client_approved",
+          person(user),
+          { comment: input.comment ?? "" },
+          ctx.now,
+        );
       } else {
         task.state = "rejected";
-        appendEvidence(ctx.db, task.id, "client_requested_changes", person(user), { comment: input.comment }, ctx.now);
+        appendEvidence(
+          ctx.db,
+          task.id,
+          "client_requested_changes",
+          person(user),
+          { comment: input.comment },
+          ctx.now,
+        );
         ctx.db.notifications.unshift({
           id: newId("ntf"),
           audience: "console",
@@ -671,7 +771,9 @@ export const routes: RouteDef[] = [
               t.priority === "p0",
           };
         })
-        .sort((a, b) => (a.pullRequest?.openedAt ?? "").localeCompare(b.pullRequest?.openedAt ?? ""));
+        .sort((a, b) =>
+          (a.pullRequest?.openedAt ?? "").localeCompare(b.pullRequest?.openedAt ?? ""),
+        );
     },
   },
 
@@ -680,12 +782,16 @@ export const routes: RouteDef[] = [
     method: "GET",
     path: "/evidence",
     auth: "any",
-    summary: "Evidence packs (one per task with activity). Filters: applicationId, type, from, to, q.",
+    summary:
+      "Evidence packs (one per task with activity). Filters: applicationId, type, from, to, q.",
     response: z.array(EvidencePackSchema),
     handler: (ctx) => {
       const orgs = visibleOrgIds(ctx);
       const q = (ctx.query.get("q") ?? "").toLowerCase();
-      return filterTasks(ctx, ctx.db.tasks.filter((t) => orgs.includes(t.orgId)))
+      return filterTasks(
+        ctx,
+        ctx.db.tasks.filter((t) => orgs.includes(t.orgId)),
+      )
         .filter((t) => !q || t.title.toLowerCase().includes(q) || t.id.includes(q))
         .map((t) => evidencePack(ctx.db, t, ctx.now))
         .sort((a, b) => b.lastEventAt.localeCompare(a.lastEventAt));
@@ -696,7 +802,11 @@ export const routes: RouteDef[] = [
     path: "/evidence/export",
     auth: "any",
     summary: "Export evidence packs as JSON. ?ids=pack_task_001,pack_task_002",
-    response: z.object({ exportedAt: z.string(), exportedBy: z.string(), packs: z.array(EvidencePackSchema) }),
+    response: z.object({
+      exportedAt: z.string(),
+      exportedBy: z.string(),
+      packs: z.array(EvidencePackSchema),
+    }),
     handler: (ctx) => {
       const user = requireUser(ctx);
       const ids = (ctx.query.get("ids") ?? "").split(",").filter(Boolean);
@@ -713,13 +823,16 @@ export const routes: RouteDef[] = [
     method: "GET",
     path: "/reports/savings",
     auth: "any",
-    summary: "Monthly savings report computed from delivered tasks. ?month=YYYY-MM (default: latest) ?orgId= (console)",
+    summary:
+      "Monthly savings report computed from delivered tasks. ?month=YYYY-MM (default: latest) ?orgId= (console)",
     response: SavingsReportSchema,
     handler: (ctx) => {
       const orgId = portalOrgId(ctx);
       // Default: the last complete calendar month (the current month is still partial).
       const d = new Date(ctx.now);
-      const lastFull = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+      const lastFull = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1))
+        .toISOString()
+        .slice(0, 7);
       return savingsReportFor(ctx.db, orgId, ctx.query.get("month") ?? lastFull, ctx.now);
     },
   },
@@ -757,7 +870,9 @@ export const routes: RouteDef[] = [
       return {
         client: clientSummary(ctx.db, org.id, mgr, ctx.now),
         contract: ctx.db.contracts.find((c) => c.orgId === org.id) ?? null,
-        applications: ctx.db.applications.filter((a) => a.orgId === org.id).map((a) => applicationSummary(ctx.db, a.id, ctx.now)),
+        applications: ctx.db.applications
+          .filter((a) => a.orgId === org.id)
+          .map((a) => applicationSummary(ctx.db, a.id, ctx.now)),
         contacts: ctx.db.users.filter((u) => u.orgId === org.id),
         tasks: ctx.db.tasks
           .filter((t) => t.orgId === org.id)
@@ -782,7 +897,8 @@ export const routes: RouteDef[] = [
     auth: "console",
     summary: "ForgePilot engineers (for assignee pickers).",
     response: z.array(UserSchema),
-    handler: (ctx) => ctx.db.users.filter((u) => u.role === "fp_engineer" || u.role === "fp_manager"),
+    handler: (ctx) =>
+      ctx.db.users.filter((u) => u.role === "fp_engineer" || u.role === "fp_manager"),
   },
 
   // ---- team
@@ -803,11 +919,18 @@ export const routes: RouteDef[] = [
     response: UserSchema,
     handler: (ctx) => {
       const user = requireUser(ctx);
-      if (!canManageTeam(user.role)) throw new HttpError(403, "Only client admins can invite users");
+      if (!canManageTeam(user.role))
+        throw new HttpError(403, "Only client admins can invite users");
       const input = parseBody(InviteUserInputSchema, ctx.body);
       if (ctx.db.users.some((u) => u.email.toLowerCase() === input.email.toLowerCase()))
         throw new HttpError(409, "Someone with that email is already on the team");
-      const invited: User = { id: newId("u"), ...input, orgId: user.orgId, status: "invited", title: "" };
+      const invited: User = {
+        id: newId("u"),
+        ...input,
+        orgId: user.orgId,
+        status: "invited",
+        title: "",
+      };
       ctx.db.users.push(invited);
       return invited;
     },
@@ -829,7 +952,8 @@ export const routes: RouteDef[] = [
         description: p.description,
         availability: p.availability,
         scopes: p.scopes,
-        connection: ctx.db.integrations.find((i) => i.orgId === orgId && i.providerId === p.id) ?? null,
+        connection:
+          ctx.db.integrations.find((i) => i.orgId === orgId && i.providerId === p.id) ?? null,
       }));
     },
   },
@@ -842,7 +966,8 @@ export const routes: RouteDef[] = [
     response: IntegrationViewSchema,
     handler: (ctx) => {
       const user = requireUser(ctx);
-      if (!canManageTeam(user.role)) throw new HttpError(403, "Only client admins can change integrations");
+      if (!canManageTeam(user.role))
+        throw new HttpError(403, "Only client admins can change integrations");
       const provider = providerById(ctx.params.providerId);
       if (!provider) throw new HttpError(404, "Unknown integration");
       if (provider.availability !== "available") throw new HttpError(409, "Not available yet");
@@ -850,12 +975,34 @@ export const routes: RouteDef[] = [
       const orgId = portalOrgId(ctx);
       let conn = ctx.db.integrations.find((i) => i.orgId === orgId && i.providerId === provider.id);
       if (!conn) {
-        conn = { id: newId("int"), orgId, providerId: provider.id, status: "connected", account, connectedAt: toIso(ctx.now), scopes: provider.scopes };
+        conn = {
+          id: newId("int"),
+          orgId,
+          providerId: provider.id,
+          status: "connected",
+          account,
+          connectedAt: toIso(ctx.now),
+          scopes: provider.scopes,
+        };
         ctx.db.integrations.push(conn);
       } else {
-        Object.assign(conn, { status: "connected", account, connectedAt: toIso(ctx.now), scopes: provider.scopes, error: undefined });
+        Object.assign(conn, {
+          status: "connected",
+          account,
+          connectedAt: toIso(ctx.now),
+          scopes: provider.scopes,
+          error: undefined,
+        });
       }
-      return { providerId: provider.id, name: provider.name, category: provider.category, description: provider.description, availability: provider.availability, scopes: provider.scopes, connection: conn };
+      return {
+        providerId: provider.id,
+        name: provider.name,
+        category: provider.category,
+        description: provider.description,
+        availability: provider.availability,
+        scopes: provider.scopes,
+        connection: conn,
+      };
     },
   },
   {
@@ -866,9 +1013,13 @@ export const routes: RouteDef[] = [
     response: OkSchema,
     handler: (ctx) => {
       const user = requireUser(ctx);
-      if (!canManageTeam(user.role)) throw new HttpError(403, "Only client admins can change integrations");
-      const conn = ctx.db.integrations.find((i) => i.orgId === portalOrgId(ctx) && i.providerId === ctx.params.providerId);
-      if (conn) Object.assign(conn, { status: "disconnected", connectedAt: null, error: undefined });
+      if (!canManageTeam(user.role))
+        throw new HttpError(403, "Only client admins can change integrations");
+      const conn = ctx.db.integrations.find(
+        (i) => i.orgId === portalOrgId(ctx) && i.providerId === ctx.params.providerId,
+      );
+      if (conn)
+        Object.assign(conn, { status: "disconnected", connectedAt: null, error: undefined });
       return { ok: true };
     },
   },
@@ -923,20 +1074,56 @@ export const routes: RouteDef[] = [
       const hit = (s: string) => !q || s.toLowerCase().includes(q);
       const out: z.infer<typeof SearchResultSchema>[] = [];
       if (area === "console")
-        ctx.db.organizations.filter((o) => hit(o.name)).forEach((o) => out.push({ kind: "client", id: o.id, title: o.name, subtitle: o.industry, href: `/console/clients/${o.id}` }));
+        ctx.db.organizations
+          .filter((o) => hit(o.name))
+          .forEach((o) =>
+            out.push({
+              kind: "client",
+              id: o.id,
+              title: o.name,
+              subtitle: o.industry,
+              href: `/console/clients/${o.id}`,
+            }),
+          );
       ctx.db.applications
         .filter((a) => orgs.includes(a.orgId) && hit(a.name))
-        .forEach((a) => out.push({ kind: "application", id: a.id, title: a.name, subtitle: ctx.db.organizations.find((o) => o.id === a.orgId)?.name ?? "", href: area === "portal" ? `/portal/applications/${a.id}` : `/console/clients/${a.orgId}` }));
+        .forEach((a) =>
+          out.push({
+            kind: "application",
+            id: a.id,
+            title: a.name,
+            subtitle: ctx.db.organizations.find((o) => o.id === a.orgId)?.name ?? "",
+            href:
+              area === "portal" ? `/portal/applications/${a.id}` : `/console/clients/${a.orgId}`,
+          }),
+        );
       ctx.db.repositories
         .filter((r) => hit(repoName(r.url)))
         .forEach((r) => {
           const s = repositorySummary(ctx.db, r.id);
           if (orgs.includes(s.organizationId))
-            out.push({ kind: "repository", id: r.id, title: s.name, subtitle: s.applicationName, href: area === "portal" ? `/portal/applications/${r.applicationId}?tab=repositories` : `/console/repositories/${r.id}` });
+            out.push({
+              kind: "repository",
+              id: r.id,
+              title: s.name,
+              subtitle: s.applicationName,
+              href:
+                area === "portal"
+                  ? `/portal/applications/${r.applicationId}?tab=repositories`
+                  : `/console/repositories/${r.id}`,
+            });
         });
       ctx.db.tasks
         .filter((t) => orgs.includes(t.orgId) && (hit(t.title) || hit(t.id) || hit(t.source.ref)))
-        .forEach((t) => out.push({ kind: "task", id: t.id, title: t.title, subtitle: `${t.id} · ${t.source.ref}`, href: `${base}/${area === "portal" ? "work" : "tasks"}/${t.id}` }));
+        .forEach((t) =>
+          out.push({
+            kind: "task",
+            id: t.id,
+            title: t.title,
+            subtitle: `${t.id} · ${t.source.ref}`,
+            href: `${base}/${area === "portal" ? "work" : "tasks"}/${t.id}`,
+          }),
+        );
       return out.slice(0, 40);
     },
   },
@@ -948,25 +1135,71 @@ export const routes: RouteDef[] = [
     auth: "portal",
     summary: "Repositories visible after the mock Git OAuth connect. ?provider=&account=",
     response: z.array(GitRepoCandidateSchema),
-    handler: (ctx) => gitCandidates(ctx.query.get("provider") ?? "github", ctx.query.get("account") ?? "acme", ctx.now),
+    handler: (ctx) =>
+      gitCandidates(
+        ctx.query.get("provider") ?? "github",
+        ctx.query.get("account") ?? "acme",
+        ctx.now,
+      ),
   },
   {
     method: "POST",
     path: "/onboarding",
     auth: "portal",
-    summary: "Complete onboarding: create organization, contract, applications, repositories and start health scans.",
+    summary:
+      "Complete onboarding: create organization, contract, applications, repositories and start health scans.",
     request: OnboardingInputSchema,
     response: OnboardingResultSchema,
     handler: (ctx) => {
       const input = parseBody(OnboardingInputSchema, ctx.body);
       const { db, now } = ctx;
       const orgId = newId("org");
-      db.organizations.push({ id: orgId, name: input.company.name, industry: input.company.industry, region: input.company.region, tier: input.tier, status: "onboarding", onboardedAt: toIso(now), domain: input.company.contactEmail.split("@")[1] });
+      db.organizations.push({
+        id: orgId,
+        name: input.company.name,
+        industry: input.company.industry,
+        region: input.company.region,
+        tier: input.tier,
+        status: "onboarding",
+        onboardedAt: toIso(now),
+        domain: input.company.contactEmail.split("@")[1],
+      });
       const priceByTier = { maintain: 9000, maintain_assure: 12000, full_run: 18000 } as const;
-      db.contracts.push({ id: newId("ctr"), orgId, tier: input.tier, pricePerAppMonthlyUsd: priceByTier[input.tier], priorVendorHourlyRateUsd: 50, priorVendorBaselineHoursPerAppMonthly: 220, slaTargets: { criticalCvePatchHours: 72, verificationMinutesP90: 15, approvalTurnaroundHours: 48, slaMetTargetPct: 95 }, startDate: toIso(now).slice(0, 10), endDate: toIso(now + 365 * 86_400_000).slice(0, 10) });
+      db.contracts.push({
+        id: newId("ctr"),
+        orgId,
+        tier: input.tier,
+        pricePerAppMonthlyUsd: priceByTier[input.tier],
+        priorVendorHourlyRateUsd: 50,
+        priorVendorBaselineHoursPerAppMonthly: 220,
+        slaTargets: {
+          criticalCvePatchHours: 72,
+          verificationMinutesP90: 15,
+          approvalTurnaroundHours: 48,
+          slaMetTargetPct: 95,
+        },
+        startDate: toIso(now).slice(0, 10),
+        endDate: toIso(now + 365 * 86_400_000).slice(0, 10),
+      });
       const contactId = newId("u");
-      db.users.push({ id: contactId, name: input.company.contactName, email: input.company.contactEmail, role: "client_admin", orgId, status: "invited", title: "Primary contact" });
-      db.integrations.push({ id: newId("int"), orgId, providerId: input.provider, status: "connected", account: input.account, connectedAt: toIso(now), scopes: providerById(input.provider)?.scopes ?? [] });
+      db.users.push({
+        id: contactId,
+        name: input.company.contactName,
+        email: input.company.contactEmail,
+        role: "client_admin",
+        orgId,
+        status: "invited",
+        title: "Primary contact",
+      });
+      db.integrations.push({
+        id: newId("int"),
+        orgId,
+        providerId: input.provider,
+        status: "connected",
+        account: input.account,
+        connectedAt: toIso(now),
+        scopes: providerById(input.provider)?.scopes ?? [],
+      });
       const appIds: string[] = [];
       const repoIds: string[] = [];
       const scanIds: string[] = [];
@@ -978,28 +1211,96 @@ export const routes: RouteDef[] = [
         if (!appId) {
           appId = newId("app");
           appByName.set(m.applicationName, appId);
-          db.applications.push({ id: appId, orgId, name: m.applicationName, criticality: m.criticality, environments: ["dev", "staging", "prod"], ownerUserIds: [contactId], tier: input.tier });
+          db.applications.push({
+            id: appId,
+            orgId,
+            name: m.applicationName,
+            criticality: m.criticality,
+            environments: ["dev", "staging", "prod"],
+            ownerUserIds: [contactId],
+            tier: input.tier,
+          });
           appIds.push(appId);
         }
         const seed = (repo.fullName.length * 13 + i * 7) % 30;
-        const dims = { dependencies: 50 + seed, security: 45 + ((seed * 3) % 40), buildStability: 60 + ((seed * 5) % 30), tests: 35 + ((seed * 2) % 40), docs: 40 + ((seed * 7) % 40) };
-        const score = Math.round((dims.dependencies + dims.security + dims.buildStability + dims.tests + dims.docs) / 5);
+        const dims = {
+          dependencies: 50 + seed,
+          security: 45 + ((seed * 3) % 40),
+          buildStability: 60 + ((seed * 5) % 30),
+          tests: 35 + ((seed * 2) % 40),
+          docs: 40 + ((seed * 7) % 40),
+        };
+        const score = Math.round(
+          (dims.dependencies + dims.security + dims.buildStability + dims.tests + dims.docs) / 5,
+        );
         const repoId = newId("repo");
-        const providerHost = { github: "github.com", gitlab: "gitlab.com", bitbucket: "bitbucket.org", azure_devops: "dev.azure.com" }[input.provider];
-        db.repositories.push({ id: repoId, applicationId: appId, provider: input.provider, url: `https://${providerHost}/${repo.fullName}`, language: repo.language, defaultBranch: repo.defaultBranch, health: { score, ...dims }, coveragePct: dims.tests - 5, flakyTests: seed % 3, lastScanAt: toIso(now) });
+        const providerHost = {
+          github: "github.com",
+          gitlab: "gitlab.com",
+          bitbucket: "bitbucket.org",
+          azure_devops: "dev.azure.com",
+        }[input.provider];
+        db.repositories.push({
+          id: repoId,
+          applicationId: appId,
+          provider: input.provider,
+          url: `https://${providerHost}/${repo.fullName}`,
+          language: repo.language,
+          defaultBranch: repo.defaultBranch,
+          health: { score, ...dims },
+          coveragePct: dims.tests - 5,
+          flakyTests: seed % 3,
+          lastScanAt: toIso(now),
+        });
         repoIds.push(repoId);
         const findingsSeed = [
-          ["security", "critical", "Critical CVE in base image OpenSSL", "Patch base image (72h SLA)."],
-          ["dependencies", "high", "Runtime approaching end of support", "Schedule LTS upgrade in the first 30 days."],
-          ["tests", "medium", "Low coverage on core module", "Generate regression tests for top journeys."],
+          [
+            "security",
+            "critical",
+            "Critical CVE in base image OpenSSL",
+            "Patch base image (72h SLA).",
+          ],
+          [
+            "dependencies",
+            "high",
+            "Runtime approaching end of support",
+            "Schedule LTS upgrade in the first 30 days.",
+          ],
+          [
+            "tests",
+            "medium",
+            "Low coverage on core module",
+            "Generate regression tests for top journeys.",
+          ],
           ["docs", "low", "Missing runbook", "Add runbook with rollback steps."],
         ] as const;
-        findingsSeed.slice(0, 2 + (seed % 3)).forEach(([dimension, severity, title, recommendation]) =>
-          db.findings.push({ id: newId("fnd"), repositoryId: repoId, dimension, severity, title, recommendation, status: "open", detectedAt: toIso(now) }),
-        );
+        findingsSeed
+          .slice(0, 2 + (seed % 3))
+          .forEach(([dimension, severity, title, recommendation]) =>
+            db.findings.push({
+              id: newId("fnd"),
+              repositoryId: repoId,
+              dimension,
+              severity,
+              title,
+              recommendation,
+              status: "open",
+              detectedAt: toIso(now),
+            }),
+          );
         db.healthHistory.push({ applicationId: appId, weekStart: toIso(now).slice(0, 10), score });
         const scanId = newId("scan");
-        db.scans.push({ id: scanId, repositoryId: repoId, startedAt: toIso(now), finishedAt: null, status: "running", healthScore: null, findingsCount: null, trigger: "onboarding", simulatedEndsAt: now + SCAN_MS + i * 1200 });
+        db.scans.push({
+          id: scanId,
+          repositoryId: repoId,
+          startedAt: toIso(now),
+          finishedAt: null,
+          status: "running",
+          healthScore: null,
+          findingsCount: null,
+          trigger: "onboarding",
+          simulatedEndsAt: now + SCAN_MS + i * 1200,
+        });
         scanIds.push(scanId);
       });
       return { organizationId: orgId, applicationIds: appIds, repositoryIds: repoIds, scanIds };
@@ -1018,7 +1319,10 @@ export const routes: RouteDef[] = [
       const repos = ctx.db.repositories.filter((r) => apps.some((a) => a.id === r.applicationId));
       const scans = ctx.db.scans
         .filter((s) => repos.some((r) => r.id === s.repositoryId) && s.trigger === "onboarding")
-        .map((s) => ({ ...s, repositoryName: repoName(repos.find((r) => r.id === s.repositoryId)!.url) }));
+        .map((s) => ({
+          ...s,
+          repositoryName: repoName(repos.find((r) => r.id === s.repositoryId)!.url),
+        }));
       const done = scans.length > 0 && scans.every((s) => s.status === "completed");
       const progress = scans.length
         ? Math.round(
@@ -1040,13 +1344,37 @@ export const routes: RouteDef[] = [
         applications: apps.map((a) => applicationSummary(ctx.db, a.id, ctx.now)),
         topFindings: ctx.db.findings
           .filter((f) => repos.some((r) => r.id === f.repositoryId))
-          .map((f) => ({ ...f, repositoryName: repoName(repos.find((r) => r.id === f.repositoryId)!.url) }))
+          .map((f) => ({
+            ...f,
+            repositoryName: repoName(repos.find((r) => r.id === f.repositoryId)!.url),
+          }))
           .sort((a, b) => sev[a.severity] - sev[b.severity])
           .slice(0, 8),
         plan90: [
-          { window: "Days 0–30", items: ["Patch all critical CVEs within 72h SLA", "Turn on the verification gate for every PR", "Baseline regression suite for top 5 journeys"] },
-          { window: "Days 31–60", items: ["Upgrade runtimes approaching end of support", "Raise coverage on low-scoring modules", "Fix flaky tests"] },
-          { window: "Days 61–90", items: ["Batch dependency upgrades monthly", "Runbooks for each application", "First quarterly savings review"] },
+          {
+            window: "Days 0–30",
+            items: [
+              "Patch all critical CVEs within 72h SLA",
+              "Turn on the verification gate for every PR",
+              "Baseline regression suite for top 5 journeys",
+            ],
+          },
+          {
+            window: "Days 31–60",
+            items: [
+              "Upgrade runtimes approaching end of support",
+              "Raise coverage on low-scoring modules",
+              "Fix flaky tests",
+            ],
+          },
+          {
+            window: "Days 61–90",
+            items: [
+              "Batch dependency upgrades monthly",
+              "Runbooks for each application",
+              "First quarterly savings review",
+            ],
+          },
         ],
       };
     },
@@ -1101,7 +1429,11 @@ export function dispatch(
   }
   const candidates = routes.filter((r) => match(r.path, path));
   const route = candidates.find((r) => r.method === method);
-  if (!route) return { status: candidates.length ? 405 : 404, body: { error: `No mock route for ${method} ${path}` } };
+  if (!route)
+    return {
+      status: candidates.length ? 405 : 404,
+      body: { error: `No mock route for ${method} ${path}` },
+    };
   const user = db.users.find((u) => u.id === sessionUserId) ?? null;
   const ctx: Ctx = { db, user, params: match(route.path, path)!, query, body, now: Date.now() };
   try {
@@ -1118,13 +1450,17 @@ export function dispatch(
       if (!check.success) {
         return {
           status: 500,
-          body: { error: `Response for ${method} ${route.path} does not match its schema`, details: z.flattenError(check.error) },
+          body: {
+            error: `Response for ${method} ${route.path} does not match its schema`,
+            details: z.flattenError(check.error),
+          },
         };
       }
     }
     return { status: 200, body: result, setCookies: ctx.setCookies };
   } catch (e) {
-    if (e instanceof HttpError) return { status: e.status, body: { error: e.message, details: e.details } };
+    if (e instanceof HttpError)
+      return { status: e.status, body: { error: e.message, details: e.details } };
     return { status: 500, body: { error: (e as Error).message } };
   }
 }
