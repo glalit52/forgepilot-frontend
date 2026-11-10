@@ -150,7 +150,7 @@ export function NewTaskDialog({
         <form
           onSubmit={submit}
           noValidate
-          className="grid gap-4 sm:grid-cols-2"
+          className="grid grid-cols-1 gap-4 sm:grid-cols-2"
           aria-label="New task"
         >
           <div className="flex flex-col gap-1.5 sm:col-span-2">
@@ -274,7 +274,7 @@ export function NewTaskDialog({
               rows={2}
             />
           </div>
-          <div className="grid gap-4 sm:col-span-2 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="nt-priority">Priority</Label>
               <Select value={d.priority} onValueChange={(v) => set("priority", v as Priority)}>

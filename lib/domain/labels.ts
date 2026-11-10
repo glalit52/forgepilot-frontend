@@ -1,4 +1,11 @@
-import type { ApprovalAction, FindingCategory, Priority, Provider, TaskSource, WorkspaceKind } from "@/lib/schemas";
+import type {
+  ApprovalAction,
+  FindingCategory,
+  Priority,
+  Provider,
+  TaskSource,
+  WorkspaceKind,
+} from "@/lib/schemas";
 
 export const PROVIDER_LABEL: Record<Provider, string> = {
   claude_code: "Claude Code",
@@ -7,7 +14,12 @@ export const PROVIDER_LABEL: Record<Provider, string> = {
   cursor: "Cursor background agents",
 };
 
-export const PRIORITY_LABEL: Record<Priority, string> = { urgent: "Urgent", high: "High", medium: "Medium", low: "Low" };
+export const PRIORITY_LABEL: Record<Priority, string> = {
+  urgent: "Urgent",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
 
 export const TASK_SOURCE_LABEL: Record<TaskSource, string> = {
   manual: "Created manually",
@@ -36,7 +48,11 @@ export const APPROVAL_ACTION_LABEL: Record<ApprovalAction, string> = {
   deploy_production: "Deploy to production",
 };
 
-export const WORKSPACE_KIND_LABEL: Record<WorkspaceKind, string> = { personal: "Personal", team: "Team", agency: "Agency" };
+export const WORKSPACE_KIND_LABEL: Record<WorkspaceKind, string> = {
+  personal: "Personal",
+  team: "Team",
+  agency: "Agency",
+};
 
 export const USE_CASE_LABEL: Record<string, string> = {
   ship_ai_code_safely: "Ship AI-written code safely",

@@ -58,7 +58,11 @@ const INVOICE_STATUS: Record<
 
 function BillingSkeleton() {
   return (
-    <div className="grid gap-4 lg:grid-cols-3" aria-busy="true" aria-label="Loading billing">
+    <div
+      className="grid grid-cols-1 gap-4 lg:grid-cols-3"
+      aria-busy="true"
+      aria-label="Loading billing"
+    >
       {Array.from({ length: 6 }).map((_, i) => (
         <div
           key={i}
@@ -109,12 +113,12 @@ export default function BillingPage() {
       <QueryState query={billing} loading={<BillingSkeleton />}>
         {(b) => (
           <div className="flex flex-col gap-6">
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <PlanCard b={b} onChange={() => setPlanOpen(true)} />
               <SpendCard b={b} isOwner={isOwner} onSetBudget={() => setBudgetOpen(true)} />
             </div>
             <UsageCard b={b} />
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <Card className="lg:col-span-2">
                 <CardHeader>
                   <CardTitle>Daily cost</CardTitle>
@@ -128,7 +132,7 @@ export default function BillingPage() {
               </Card>
               <LimitsCard b={b} onUpgrade={() => setPlanOpen(true)} />
             </div>
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <Card>
                 <CardHeader>
                   <CardTitle>Cost by project</CardTitle>
@@ -364,7 +368,7 @@ function UsageCard({ b }: { b: Billing }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
-        <div className="grid gap-x-8 gap-y-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2 xl:grid-cols-3">
           {b.usage.map((u) => (
             <div key={u.meter} className="flex flex-col gap-2">
               <UsageMeter

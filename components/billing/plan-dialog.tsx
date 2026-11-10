@@ -131,7 +131,7 @@ export function PlanDialog({
         </div>
 
         {plans.isPending ? (
-          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
             {Array.from({ length: 6 }).map((_, i) => (
               <Skeleton key={i} className="h-72" />
             ))}
@@ -139,7 +139,7 @@ export function PlanDialog({
         ) : plans.error || !plans.data ? (
           <ErrorState error={plans.error} onRetry={() => plans.refetch()} />
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             {plans.data.map((p) => {
               const isCurrent = p.id === current && cycle === currentCycle;
               const amount = price(p, cycle);

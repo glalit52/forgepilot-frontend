@@ -1,4 +1,10 @@
-import type { FailureClass, SessionStatus, Severity, TaskStatus, TestRunStatus } from "@/lib/schemas";
+import type {
+  FailureClass,
+  SessionStatus,
+  Severity,
+  TaskStatus,
+  TestRunStatus,
+} from "@/lib/schemas";
 
 export type Tone = "success" | "warning" | "danger" | "neutral" | "info" | "accent";
 
@@ -46,7 +52,12 @@ export const RUN_STATUS_LABEL: Record<TestRunStatus, string> = {
   errored: "Infra error",
 };
 
-export const SEVERITY_TONE: Record<Severity, Tone> = { critical: "danger", high: "danger", medium: "warning", low: "neutral" };
+export const SEVERITY_TONE: Record<Severity, Tone> = {
+  critical: "danger",
+  high: "danger",
+  medium: "warning",
+  low: "neutral",
+};
 
 export const FAILURE_CLASS_LABEL: Record<FailureClass, string> = {
   product_defect: "Product defect",

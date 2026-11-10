@@ -48,7 +48,10 @@ function SessionGate({ children }: { children: React.ReactNode }) {
   }, [error, router]);
   if (isPending || !data)
     return (
-      <div className="text-muted-foreground flex h-64 items-center justify-center text-sm" aria-busy="true">
+      <div
+        className="text-muted-foreground flex h-64 items-center justify-center text-sm"
+        aria-busy="true"
+      >
         Loading your workspace…
       </div>
     );
@@ -67,7 +70,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Sidebar collapsed={collapsed} onToggle={toggle} />
             <div className="flex min-w-0 flex-1 flex-col">
               <header className="bg-background/85 sticky top-0 z-40 flex h-14 items-center gap-2 border-b px-4 backdrop-blur lg:px-6">
-                <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="lg:hidden"
+                  onClick={() => setMobileOpen(true)}
+                  aria-label="Open navigation"
+                >
                   <MenuIcon />
                 </Button>
                 <div className="min-w-0 flex-1">

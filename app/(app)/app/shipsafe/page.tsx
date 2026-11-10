@@ -148,7 +148,7 @@ export default function ShipSafeDashboardPage() {
             )}
           </section>
 
-          <div className="grid gap-6 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <Card className="flex flex-col gap-3 p-4 lg:col-span-2">
               <Section
                 title="Pass rate, last 30 days"
@@ -183,7 +183,7 @@ export default function ShipSafeDashboardPage() {
             </Card>
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <Section
               className="lg:col-span-2"
               title="Recent runs"

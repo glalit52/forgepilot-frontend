@@ -46,7 +46,9 @@ export function checkIntegrity(db: MockDb): string[] {
     ref(repos.has(s.repositoryId), `suite ${s.id} → unknown repo`);
     sameOrg(s, repos.get(s.repositoryId), `suite ${s.id}`);
   });
-  db.dependencies.forEach((d) => ref(repos.has(d.repositoryId), `dependency ${d.id} → unknown repo`));
+  db.dependencies.forEach((d) =>
+    ref(repos.has(d.repositoryId), `dependency ${d.id} → unknown repo`),
+  );
   db.findings.forEach((f) => {
     ref(repos.has(f.repositoryId), `finding ${f.id} → unknown repo`);
     sameOrg(f, repos.get(f.repositoryId), `finding ${f.id}`);
@@ -65,7 +67,9 @@ export function checkIntegrity(db: MockDb): string[] {
     sameOrg(s, tasks.get(s.taskId), `session ${s.id}`);
     ref(agents.has(s.agentId), `session ${s.id} → unknown agent`);
   });
-  db.workspaces.forEach((w) => ref(sessions.has(w.sessionId), `workspace ${w.id} → unknown session`));
+  db.workspaces.forEach((w) =>
+    ref(sessions.has(w.sessionId), `workspace ${w.id} → unknown session`),
+  );
   db.pullRequests.forEach((p) => {
     ref(repos.has(p.repositoryId), `PR ${p.id} → unknown repo`);
     sameOrg(p, repos.get(p.repositoryId), `PR ${p.id}`);
@@ -76,7 +80,9 @@ export function checkIntegrity(db: MockDb): string[] {
     ref(repos.has(r.repositoryId), `run ${r.id} → unknown repo`);
     sameOrg(r, repos.get(r.repositoryId), `run ${r.id}`);
     ref(!r.pullRequestId || prs.has(r.pullRequestId), `run ${r.id} → unknown PR`);
-    r.selectedSuites.forEach((s) => ref(suites.has(s.suiteId), `run ${r.id} → unknown suite ${s.suiteId}`));
+    r.selectedSuites.forEach((s) =>
+      ref(suites.has(s.suiteId), `run ${r.id} → unknown suite ${s.suiteId}`),
+    );
   });
   db.testResults.forEach((r) => {
     ref(runs.has(r.runId), `result ${r.id} → unknown run`);
@@ -97,12 +103,21 @@ export function checkIntegrity(db: MockDb): string[] {
 export function loadMockDb(raw: unknown): MockDb {
   const parsed = MockDbSchema.safeParse(structuredClone(raw));
   if (!parsed.success) {
-    const lines = parsed.error.issues.slice(0, 15).map((i) => `  • ${i.path.map(String).join(".")}: ${i.message}`);
-    throw new MockDataError(`mocks/mock-data.json does not match lib/schemas:\n${lines.join("\n")}`);
+    const lines = parsed.error.issues
+      .slice(0, 15)
+      .map((i) => `  • ${i.path.map(String).join(".")}: ${i.message}`);
+    throw new MockDataError(
+      `mocks/mock-data.json does not match lib/schemas:\n${lines.join("\n")}`,
+    );
   }
   const problems = checkIntegrity(parsed.data);
   if (problems.length) {
-    throw new MockDataError(`mocks/mock-data.json has broken references:\n${problems.slice(0, 15).map((p) => `  • ${p}`).join("\n")}`);
+    throw new MockDataError(
+      `mocks/mock-data.json has broken references:\n${problems
+        .slice(0, 15)
+        .map((p) => `  • ${p}`)
+        .join("\n")}`,
+    );
   }
   return parsed.data;
 }

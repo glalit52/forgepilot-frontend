@@ -45,10 +45,12 @@ export function advanceSimulation(db: MockDb, now: number) {
     if (s.simulatedEndsAt && now >= s.simulatedEndsAt) completeSession(db, s, s.simulatedEndsAt);
   }
   for (const r of db.testRuns) {
-    if (r.status === "running" && r.simulatedEndsAt && now >= r.simulatedEndsAt) completeTestRun(db, r, r.simulatedEndsAt);
+    if (r.status === "running" && r.simulatedEndsAt && now >= r.simulatedEndsAt)
+      completeTestRun(db, r, r.simulatedEndsAt);
   }
   for (const scan of db.scans) {
-    if (scan.status === "running" && scan.simulatedEndsAt && now >= scan.simulatedEndsAt) completeScan(db, scan, scan.simulatedEndsAt);
+    if (scan.status === "running" && scan.simulatedEndsAt && now >= scan.simulatedEndsAt)
+      completeScan(db, scan, scan.simulatedEndsAt);
   }
   for (const repo of db.repositories) {
     if (repo.indexStatus === "indexing" && repo.indexReadyAt && now >= repo.indexReadyAt) {

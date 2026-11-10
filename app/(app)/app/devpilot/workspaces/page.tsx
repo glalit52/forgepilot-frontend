@@ -185,7 +185,7 @@ export default function WorkspacesPage() {
         <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold">
           <ShieldCheckIcon className="text-success size-4" aria-hidden /> How isolation works
         </h2>
-        <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {ISOLATION.map((i) => (
             <li key={i.title} className="flex items-start gap-2.5">
               <span

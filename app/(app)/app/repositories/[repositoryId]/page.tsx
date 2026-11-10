@@ -80,7 +80,7 @@ function Intelligence({ d }: { d: RepositoryDetail }) {
         </p>
       </CardHeader>
       <CardContent>
-        <dl className="grid gap-5 sm:grid-cols-2">
+        <dl className="grid grid-cols-1 gap-5 sm:grid-cols-2">
           <Fact icon={FlaskConicalIcon} label="Test commands">
             {r.testCommands.length ? (
               <ul className="flex flex-col gap-1">
@@ -284,7 +284,7 @@ export default function RepositoryPage() {
               <ScanResult scan={watcher.finished} onDismiss={watcher.dismiss} />
             )}
 
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
               <Card>
                 <CardHeader className="flex-row items-center justify-between">
                   <CardTitle>Repository health</CardTitle>

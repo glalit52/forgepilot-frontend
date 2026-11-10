@@ -1,5 +1,11 @@
 import { Badge } from "@/components/ui/badge";
-import type { FailureClass, SessionStatus, Severity, TaskStatus, TestRunStatus } from "@/lib/schemas";
+import type {
+  FailureClass,
+  SessionStatus,
+  Severity,
+  TaskStatus,
+  TestRunStatus,
+} from "@/lib/schemas";
 import {
   FAILURE_CLASS_HELP,
   FAILURE_CLASS_LABEL,
@@ -25,11 +31,30 @@ const DOT: Record<Tone, string> = {
 };
 
 /** Tone badge with a coloured dot. Colour is never the only signal — the label carries meaning. */
-export function ToneBadge({ tone, children, className, pulse, title }: { tone: Tone; children: React.ReactNode; className?: string; pulse?: boolean; title?: string }) {
+export function ToneBadge({
+  tone,
+  children,
+  className,
+  pulse,
+  title,
+}: {
+  tone: Tone;
+  children: React.ReactNode;
+  className?: string;
+  pulse?: boolean;
+  title?: string;
+}) {
   return (
     <Badge variant={tone === "accent" ? "accent" : tone} className={className} title={title}>
       <span className="relative flex size-1.5" aria-hidden>
-        {pulse && <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", DOT[tone])} />}
+        {pulse && (
+          <span
+            className={cn(
+              "absolute inline-flex size-full animate-ping rounded-full opacity-60",
+              DOT[tone],
+            )}
+          />
+        )}
         <span className={cn("relative inline-flex size-1.5 rounded-full", DOT[tone])} />
       </span>
       {children}
@@ -39,21 +64,43 @@ export function ToneBadge({ tone, children, className, pulse, title }: { tone: T
 
 export function TaskStatusBadge({ status, className }: { status: TaskStatus; className?: string }) {
   return (
-    <ToneBadge tone={TASK_STATUS_TONE[status]} className={className} pulse={status === "running" || status === "verifying"}>
+    <ToneBadge
+      tone={TASK_STATUS_TONE[status]}
+      className={className}
+      pulse={status === "running" || status === "verifying"}
+    >
       {TASK_STATUS_LABEL[status]}
     </ToneBadge>
   );
 }
 
-export function SessionStatusBadge({ status, className }: { status: SessionStatus; className?: string }) {
+export function SessionStatusBadge({
+  status,
+  className,
+}: {
+  status: SessionStatus;
+  className?: string;
+}) {
   return (
-    <ToneBadge tone={SESSION_STATUS_TONE[status]} className={className} pulse={status === "running"}>
+    <ToneBadge
+      tone={SESSION_STATUS_TONE[status]}
+      className={className}
+      pulse={status === "running"}
+    >
       {SESSION_STATUS_LABEL[status]}
     </ToneBadge>
   );
 }
 
-export function RunStatusBadge({ status, className, prefix }: { status: TestRunStatus; className?: string; prefix?: string }) {
+export function RunStatusBadge({
+  status,
+  className,
+  prefix,
+}: {
+  status: TestRunStatus;
+  className?: string;
+  prefix?: string;
+}) {
   return (
     <ToneBadge tone={RUN_STATUS_TONE[status]} className={className} pulse={status === "running"}>
       {prefix ? `${prefix} ` : ""}
@@ -71,5 +118,9 @@ export function FailureClassBadge({ classification }: { classification: FailureC
 }
 
 export function SeverityBadge({ severity }: { severity: Severity }) {
-  return <ToneBadge tone={SEVERITY_TONE[severity]}>{severity[0].toUpperCase() + severity.slice(1)}</ToneBadge>;
+  return (
+    <ToneBadge tone={SEVERITY_TONE[severity]}>
+      {severity[0].toUpperCase() + severity.slice(1)}
+    </ToneBadge>
+  );
 }

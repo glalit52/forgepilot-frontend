@@ -76,7 +76,12 @@ export const NAV: NavGroup[] = [
   {
     label: "Workspace",
     items: [
-      { href: "/app/pull-requests", label: "Pull requests", icon: GitPullRequestIcon, badge: "review" },
+      {
+        href: "/app/pull-requests",
+        label: "Pull requests",
+        icon: GitPullRequestIcon,
+        badge: "review",
+      },
       { href: "/app/approvals", label: "Approvals", icon: CheckSquareIcon, badge: "approvals" },
       { href: "/app/analytics", label: "Analytics", icon: BarChart3Icon },
       { href: "/app/integrations", label: "Integrations", icon: PlugIcon },

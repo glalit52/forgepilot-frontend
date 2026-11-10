@@ -180,7 +180,7 @@ function AnalyticsSkeleton() {
           <KpiCardSkeleton key={i} />
         ))}
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Skeleton className="h-72" />
         <Skeleton className="h-72" />
       </div>
@@ -337,7 +337,7 @@ function AnalyticsBody({ d }: { d: Analytics }) {
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-3">
           <CardHeader>
             <CardTitle>North Star: verified tasks per week</CardTitle>

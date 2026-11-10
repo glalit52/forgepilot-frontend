@@ -73,7 +73,13 @@ export type FailureClass = z.infer<typeof FailureClassSchema>;
 export const SeveritySchema = z.enum(["critical", "high", "medium", "low"]);
 export type Severity = z.infer<typeof SeveritySchema>;
 
-export const FindingCategorySchema = z.enum(["vulnerability", "outdated", "build", "tests", "docs"]);
+export const FindingCategorySchema = z.enum([
+  "vulnerability",
+  "outdated",
+  "build",
+  "tests",
+  "docs",
+]);
 export type FindingCategory = z.infer<typeof FindingCategorySchema>;
 
 export const FindingStatusSchema = z.enum(["open", "task_created", "suppressed", "resolved"]);
@@ -93,8 +99,20 @@ export type ApprovalAction = z.infer<typeof ApprovalActionSchema>;
 export const ApprovalStatusSchema = z.enum(["pending", "approved", "rejected", "expired"]);
 export type ApprovalStatus = z.infer<typeof ApprovalStatusSchema>;
 
-export const MeterSchema = z.enum(["agent_minutes", "browser_minutes", "test_runs", "scan_runs", "storage_gb"]);
+export const MeterSchema = z.enum([
+  "agent_minutes",
+  "browser_minutes",
+  "test_runs",
+  "scan_runs",
+  "storage_gb",
+]);
 export type Meter = z.infer<typeof MeterSchema>;
 
-export const HealthDimensionSchema = z.enum(["dependencies", "security", "buildStability", "tests", "docs"]);
+export const HealthDimensionSchema = z.enum([
+  "dependencies",
+  "security",
+  "buildStability",
+  "tests",
+  "docs",
+]);
 export type HealthDimension = z.infer<typeof HealthDimensionSchema>;

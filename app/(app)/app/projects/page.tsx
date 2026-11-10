@@ -126,7 +126,7 @@ export default function ProjectsPage() {
 
       {projects.isPending ? (
         <div
-          className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
+          className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
           aria-busy="true"
           aria-label="Loading projects"
         >
@@ -178,7 +178,7 @@ export default function ProjectsPage() {
             </div>
           </div>
           {view === "cards" ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {projects.data.map((p) => (
                 <ProjectCard key={p.id} p={p} />
               ))}

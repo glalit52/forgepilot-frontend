@@ -5,7 +5,15 @@ import { BookOpenIcon, CheckIcon, LogOutIcon, RotateCcwIcon, UserCogIcon } from 
 import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useResetDemo, useSession } from "@/lib/api/hooks";
 import { initials } from "@/lib/domain/format";
 import { ROLE_LABEL } from "@/lib/domain/permissions";
@@ -22,7 +30,14 @@ export function UserMenu({ compact }: { compact?: boolean }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className={compact ? "size-9 rounded-full p-0" : "h-auto w-full justify-start gap-2 px-2 py-1.5"} aria-label={`User menu: ${user.name}`} disabled={pending}>
+        <Button
+          variant="ghost"
+          className={
+            compact ? "size-9 rounded-full p-0" : "h-auto w-full justify-start gap-2 px-2 py-1.5"
+          }
+          aria-label={`User menu: ${user.name}`}
+          disabled={pending}
+        >
           <Avatar className="size-7">
             <AvatarFallback>{initials(user.name)}</AvatarFallback>
           </Avatar>
@@ -37,7 +52,9 @@ export function UserMenu({ compact }: { compact?: boolean }) {
       <DropdownMenuContent align="start" side="top" className="w-80">
         <DropdownMenuLabel className="text-foreground">
           <div className="text-sm font-medium">{user.name}</div>
-          <div className="text-muted-foreground text-xs font-normal">{user.title || user.email}</div>
+          <div className="text-muted-foreground text-xs font-normal">
+            {user.title || user.email}
+          </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuLabel className="flex items-center gap-1.5">
@@ -45,10 +62,16 @@ export function UserMenu({ compact }: { compact?: boolean }) {
         </DropdownMenuLabel>
         <DropdownMenuGroup>
           {personas.map((p) => (
-            <DropdownMenuItem key={p.id} onSelect={() => p.id !== user.id && signInAs(p.id, p.workspaces[0]?.orgId)} data-testid={`persona-${p.id}`}>
+            <DropdownMenuItem
+              key={p.id}
+              onSelect={() => p.id !== user.id && signInAs(p.id, p.workspaces[0]?.orgId)}
+              data-testid={`persona-${p.id}`}
+            >
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate">{p.name}</span>
-                <span className="text-muted-foreground truncate text-xs">{p.workspaces.map((w) => `${w.name} (${ROLE_LABEL[w.role]})`).join(" · ")}</span>
+                <span className="text-muted-foreground truncate text-xs">
+                  {p.workspaces.map((w) => `${w.name} (${ROLE_LABEL[w.role]})`).join(" · ")}
+                </span>
               </span>
               {p.id === user.id && <CheckIcon aria-label="current" />}
             </DropdownMenuItem>
@@ -60,7 +83,16 @@ export function UserMenu({ compact }: { compact?: boolean }) {
             <BookOpenIcon /> Docs & API contract
           </Link>
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => reset.mutate(undefined, { onSuccess: () => toast.success("Demo data reset", { description: "Everything is back to the seeded story." }) })}>
+        <DropdownMenuItem
+          onSelect={() =>
+            reset.mutate(undefined, {
+              onSuccess: () =>
+                toast.success("Demo data reset", {
+                  description: "Everything is back to the seeded story.",
+                }),
+            })
+          }
+        >
           <RotateCcwIcon /> Reset demo data
         </DropdownMenuItem>
         <DropdownMenuItem

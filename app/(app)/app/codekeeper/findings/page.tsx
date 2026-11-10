@@ -111,7 +111,10 @@ export default function FindingsPage() {
       id: "repo",
       header: "Repository",
       cell: (f) => (
-        <Link href={`/app/repositories/${f.repositoryId}`} className="text-sm whitespace-nowrap hover:underline">
+        <Link
+          href={`/app/repositories/${f.repositoryId}`}
+          className="text-sm whitespace-nowrap hover:underline"
+        >
           {f.repositoryName}
         </Link>
       ),

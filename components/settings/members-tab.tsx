@@ -340,7 +340,7 @@ function RolesPanel() {
         <CardDescription>Least privilege by default.</CardDescription>
       </CardHeader>
       <CardContent>
-        <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-1">
+        <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-1">
           {ROLES.map((r) => (
             <div key={r}>
               <dt className="text-sm font-medium">{ROLE_LABEL[r]}</dt>

@@ -26,12 +26,24 @@ export interface TaskActionContext {
   budgetRemainingUsd?: number;
 }
 
-export function checkTaskAction(action: TaskAction, ctx: TaskActionContext): { allowed: boolean; reason?: string } {
-  if (!ALLOWED[action].includes(ctx.status)) return { allowed: false, reason: `Not available while the task is ${TASK_STATUS_LABEL[ctx.status].toLowerCase()}.` };
-  if ((action === "launch" || action === "retry") && !ctx.hasAgent) return { allowed: false, reason: "Choose an agent first." };
+export function checkTaskAction(
+  action: TaskAction,
+  ctx: TaskActionContext,
+): { allowed: boolean; reason?: string } {
+  if (!ALLOWED[action].includes(ctx.status))
+    return {
+      allowed: false,
+      reason: `Not available while the task is ${TASK_STATUS_LABEL[ctx.status].toLowerCase()}.`,
+    };
+  if ((action === "launch" || action === "retry") && !ctx.hasAgent)
+    return { allowed: false, reason: "Choose an agent first." };
   if (action === "retry" && ctx.attempts >= (ctx.maxRetries ?? DEFAULT_MAX_FIX_RETRIES) + 1)
     return { allowed: false, reason: "Retry limit reached — a human needs to investigate." };
-  if ((action === "launch" || action === "retry") && ctx.budgetRemainingUsd !== undefined && ctx.budgetRemainingUsd <= 0)
+  if (
+    (action === "launch" || action === "retry") &&
+    ctx.budgetRemainingUsd !== undefined &&
+    ctx.budgetRemainingUsd <= 0
+  )
     return { allowed: false, reason: "Monthly budget is exhausted (hard cap)." };
   return { allowed: true };
 }

@@ -38,7 +38,7 @@ function CardLink({ href, children }: { href: string; children: React.ReactNode 
 function OverviewSkeleton() {
   return (
     <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading overview">
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <NorthStarSkeleton />
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -51,7 +51,7 @@ function OverviewSkeleton() {
           <Skeleton key={i} className="h-16" />
         ))}
       </div>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Skeleton className="h-72 lg:col-span-2" />
         <Skeleton className="h-72" />
       </div>
@@ -108,7 +108,7 @@ export default function OverviewPage() {
             <SetupChecklist items={overview.data.setup} workspaceId={session.data.workspace.id} />
           )}
 
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
             <NorthStarCard data={overview.data.northStar} />
             <div className="flex flex-col gap-3">
               <KpiGrid kpis={overview.data.kpis} />
@@ -129,7 +129,7 @@ export default function OverviewPage() {
             <LifecycleStrip stages={overview.data.lifecycle} />
           </section>
 
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2">
               <CardHeader className="flex-row items-center justify-between border-b pb-3">
                 <CardTitle>

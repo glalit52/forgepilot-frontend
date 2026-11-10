@@ -224,6 +224,7 @@ export function ApprovalCard({
     <Card
       className="flex flex-col gap-4 p-4 sm:p-5"
       data-testid="approval-card"
+      role="article"
       aria-labelledby={`apr-${a.id}`}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">

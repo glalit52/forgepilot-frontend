@@ -229,7 +229,7 @@ export function SettingRow({
   htmlFor?: string;
 }) {
   return (
-    <div className="grid gap-2 py-4 first:pt-0 last:pb-0 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-6">
+    <div className="grid grid-cols-1 gap-2 py-4 first:pt-0 last:pb-0 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-6">
       <div>
         {htmlFor ? (
           <label htmlFor={htmlFor} className="text-sm font-medium">

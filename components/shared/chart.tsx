@@ -2,12 +2,24 @@
 export const CHART = {
   grid: "var(--border)",
   axis: "var(--muted-foreground)",
-  series: ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"],
+  series: [
+    "var(--chart-1)",
+    "var(--chart-2)",
+    "var(--chart-3)",
+    "var(--chart-4)",
+    "var(--chart-5)",
+  ],
   success: "var(--success)",
   danger: "var(--danger)",
   warning: "var(--warning)",
   tooltip: {
-    contentStyle: { background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--popover-foreground)", fontSize: 12 },
+    contentStyle: {
+      background: "var(--popover)",
+      border: "1px solid var(--border)",
+      borderRadius: 8,
+      color: "var(--popover-foreground)",
+      fontSize: 12,
+    },
     labelStyle: { color: "var(--muted-foreground)" },
     cursor: { fill: "var(--muted)", opacity: 0.4 },
   },

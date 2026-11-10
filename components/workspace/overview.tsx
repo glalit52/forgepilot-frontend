@@ -503,7 +503,7 @@ export function ModuleCards({ modules }: { modules: Overview["modules"] }) {
   const { devpilot, shipsafe, codekeeper } = modules;
   const hb = codekeeper.avgHealth === null ? null : healthBand(codekeeper.avgHealth);
   return (
-    <div className="grid gap-3 md:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
       <ModuleCard
         module="devpilot"
         stats={[
@@ -621,7 +621,7 @@ export function SetupChecklist({
           value={(done / items.length) * 100}
           aria-label={`Setup ${done} of ${items.length} complete`}
         />
-        <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-5">
+        <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-5">
           {items.map((i) => (
             <li key={i.key}>
               <Link

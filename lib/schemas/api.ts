@@ -11,12 +11,10 @@ import {
   BugSchema,
   DependencySchema,
   FindingSchema,
-  HealthSchema,
   HealthSnapshotSchema,
   IntegrationSchema,
   InvitationSchema,
   InvoiceSchema,
-  NotificationSchema,
   OrganizationSchema,
   PolicySchema,
   ProjectSchema,
@@ -38,7 +36,6 @@ import {
   PrioritySchema,
   ProviderSchema,
   RoleSchema,
-  SeveritySchema,
   TaskStatusSchema,
   WorkspaceKindSchema,
 } from "./enums";
@@ -60,7 +57,10 @@ export const ActivityItemSchema = AuditLogSchema.extend({
 export type ActivityItem = z.infer<typeof ActivityItemSchema>;
 
 // ---------------------------------------------------------------- session & workspace
-export const WorkspaceMembershipSchema = z.object({ organization: OrganizationSchema, role: RoleSchema });
+export const WorkspaceMembershipSchema = z.object({
+  organization: OrganizationSchema,
+  role: RoleSchema,
+});
 export type WorkspaceMembership = z.infer<typeof WorkspaceMembershipSchema>;
 
 export const SessionInfoSchema = z.object({
@@ -68,8 +68,16 @@ export const SessionInfoSchema = z.object({
   workspace: OrganizationSchema,
   role: RoleSchema,
   workspaces: z.array(WorkspaceMembershipSchema),
-  personas: z.array(UserSchema.extend({ workspaces: z.array(z.object({ orgId: z.string(), name: z.string(), role: RoleSchema })) })),
-  counts: z.object({ pendingApprovals: z.number(), reviewReady: z.number(), unreadNotifications: z.number() }),
+  personas: z.array(
+    UserSchema.extend({
+      workspaces: z.array(z.object({ orgId: z.string(), name: z.string(), role: RoleSchema })),
+    }),
+  ),
+  counts: z.object({
+    pendingApprovals: z.number(),
+    reviewReady: z.number(),
+    unreadNotifications: z.number(),
+  }),
 });
 export type SessionInfo = z.infer<typeof SessionInfoSchema>;
 
@@ -86,7 +94,14 @@ export type SignUpInput = z.infer<typeof SignUpInputSchema>;
 export const CreateWorkspaceInputSchema = z.object({
   name: z.string().trim().min(2, "Name your workspace").max(48),
   kind: WorkspaceKindSchema,
-  useCase: z.enum(["ship_ai_code_safely", "verify_prs", "maintain_repos", "coordinate_agents", "agency_client_repos", "personal_projects"]),
+  useCase: z.enum([
+    "ship_ai_code_safely",
+    "verify_prs",
+    "maintain_repos",
+    "coordinate_agents",
+    "agency_client_repos",
+    "personal_projects",
+  ]),
 });
 export type CreateWorkspaceInput = z.infer<typeof CreateWorkspaceInputSchema>;
 
@@ -245,7 +260,12 @@ export const DiffFileSchema = z.object({
 export type DiffFile = z.infer<typeof DiffFileSchema>;
 export type DiffLine = z.infer<typeof DiffLineSchema>;
 
-export const PolicyCheckSchema = z.object({ name: z.string(), required: z.boolean(), status: z.enum(["passed", "failed", "pending", "missing"]), detail: z.string() });
+export const PolicyCheckSchema = z.object({
+  name: z.string(),
+  required: z.boolean(),
+  status: z.enum(["passed", "failed", "pending", "missing"]),
+  detail: z.string(),
+});
 export type PolicyCheck = z.infer<typeof PolicyCheckSchema>;
 
 export const PullRequestDetailSchema = z.object({
@@ -266,10 +286,23 @@ export const TestRunDetailSchema = z.object({
   run: TestRunListItemSchema,
   repository: RepositorySchema,
   pullRequest: PullRequestSchema.nullable(),
-  suites: z.array(TestSuiteSchema.extend({ reason: z.string(), passed: z.number(), failed: z.number(), flaky: z.number() })),
+  suites: z.array(
+    TestSuiteSchema.extend({
+      reason: z.string(),
+      passed: z.number(),
+      failed: z.number(),
+      flaky: z.number(),
+    }),
+  ),
   results: z.array(TestResultSchema.extend({ suiteName: z.string() })),
   previous: TestRunSchema.nullable(),
-  comparison: z.object({ newlyFailing: z.array(z.string()), fixed: z.array(z.string()), stillFailing: z.array(z.string()) }).nullable(),
+  comparison: z
+    .object({
+      newlyFailing: z.array(z.string()),
+      fixed: z.array(z.string()),
+      stillFailing: z.array(z.string()),
+    })
+    .nullable(),
   bugs: z.array(BugSchema),
   workerLog: z.array(LogLineSchema),
 });
@@ -322,7 +355,15 @@ export type TrendPoint = z.infer<typeof TrendPointSchema>;
 
 export const AttentionItemSchema = z.object({
   id: z.string(),
-  kind: z.enum(["approval", "failed_check", "critical_finding", "budget", "integration", "review_ready", "waiting_input"]),
+  kind: z.enum([
+    "approval",
+    "failed_check",
+    "critical_finding",
+    "budget",
+    "integration",
+    "review_ready",
+    "waiting_input",
+  ]),
   title: z.string(),
   detail: z.string(),
   href: z.string(),
@@ -331,7 +372,11 @@ export const AttentionItemSchema = z.object({
 export type AttentionItem = z.infer<typeof AttentionItemSchema>;
 
 export const OverviewSchema = z.object({
-  northStar: z.object({ value: z.number(), previous: z.number(), weekly: z.array(TrendPointSchema) }),
+  northStar: z.object({
+    value: z.number(),
+    previous: z.number(),
+    weekly: z.array(TrendPointSchema),
+  }),
   kpis: z.object({
     activeSessions: z.number(),
     prsAwaitingReview: z.number(),
@@ -342,16 +387,28 @@ export const OverviewSchema = z.object({
     spendUsd: z.number(),
     budgetUsd: z.number(),
   }),
-  lifecycle: z.array(z.object({ key: z.string(), label: z.string(), count: z.number(), href: z.string() })),
+  lifecycle: z.array(
+    z.object({ key: z.string(), label: z.string(), count: z.number(), href: z.string() }),
+  ),
   attention: z.array(AttentionItemSchema),
   activity: z.array(ActivityItemSchema),
   liveSessions: z.array(SessionListItemSchema),
   modules: z.object({
-    devpilot: z.object({ running: z.number(), reviewReady: z.number(), successRatePct: z.number() }),
+    devpilot: z.object({
+      running: z.number(),
+      reviewReady: z.number(),
+      successRatePct: z.number(),
+    }),
     shipsafe: z.object({ runsToday: z.number(), passRatePct: z.number(), openBugs: z.number() }),
-    codekeeper: z.object({ avgHealth: z.number().nullable(), openFindings: z.number(), critical: z.number() }),
+    codekeeper: z.object({
+      avgHealth: z.number().nullable(),
+      openFindings: z.number(),
+      critical: z.number(),
+    }),
   }),
-  setup: z.array(z.object({ key: z.string(), label: z.string(), done: z.boolean(), href: z.string() })),
+  setup: z.array(
+    z.object({ key: z.string(), label: z.string(), done: z.boolean(), href: z.string() }),
+  ),
 });
 export type Overview = z.infer<typeof OverviewSchema>;
 
@@ -367,7 +424,15 @@ export const ShipSafeOverviewSchema = z.object({
     actionableDefectPct: z.number(),
   }),
   failureBreakdown: z.array(z.object({ classification: FailureClassSchema, count: z.number() })),
-  repositories: z.array(z.object({ repositoryId: z.string(), name: z.string(), passRatePct: z.number(), runs: z.number(), lastStatus: z.string().nullable() })),
+  repositories: z.array(
+    z.object({
+      repositoryId: z.string(),
+      name: z.string(),
+      passRatePct: z.number(),
+      runs: z.number(),
+      lastStatus: z.string().nullable(),
+    }),
+  ),
   recentRuns: z.array(TestRunListItemSchema),
   openBugs: z.array(BugListItemSchema),
 });
@@ -380,26 +445,71 @@ export const CodeKeeperOverviewSchema = z.object({
   findingsBySeverity: z.record(z.string(), z.number()),
   findingsByCategory: z.record(z.string(), z.number()),
   recentScans: z.array(ScanSchema.extend({ repositoryName: z.string() })),
-  maintenance: z.object({ prsCreated: z.number(), prsMerged: z.number(), acceptancePct: z.number(), inProgress: z.number() }),
+  maintenance: z.object({
+    prsCreated: z.number(),
+    prsMerged: z.number(),
+    acceptancePct: z.number(),
+    inProgress: z.number(),
+  }),
   queue: z.array(FindingListItemSchema),
 });
 export type CodeKeeperOverview = z.infer<typeof CodeKeeperOverviewSchema>;
 
 export const DevPilotOverviewSchema = z.object({
-  kpis: z.object({ running: z.number(), waiting: z.number(), reviewReady: z.number(), successRatePct: z.number(), avgCostUsd: z.number(), spend30dUsd: z.number() }),
+  kpis: z.object({
+    running: z.number(),
+    waiting: z.number(),
+    reviewReady: z.number(),
+    successRatePct: z.number(),
+    avgCostUsd: z.number(),
+    spend30dUsd: z.number(),
+  }),
   board: z.record(z.string(), z.array(TaskListItemSchema)),
   liveSessions: z.array(SessionListItemSchema),
-  agents: z.array(AgentSchema.extend({ running: z.number(), sessions30d: z.number(), successRatePct: z.number(), costUsd30d: z.number() })),
+  agents: z.array(
+    AgentSchema.extend({
+      running: z.number(),
+      sessions30d: z.number(),
+      successRatePct: z.number(),
+      costUsd30d: z.number(),
+    }),
+  ),
 });
 export type DevPilotOverview = z.infer<typeof DevPilotOverviewSchema>;
 
 export const AnalyticsSchema = z.object({
   rangeDays: z.number(),
   northStar: z.array(TrendPointSchema),
-  taskSuccessByType: z.array(z.object({ category: z.string(), tasks: z.number(), successPct: z.number(), avgCostUsd: z.number(), reworkPct: z.number() })),
-  providers: z.array(z.object({ provider: ProviderSchema, sessions: z.number(), successPct: z.number(), avgMinutes: z.number(), costUsd: z.number(), humanInterventions: z.number() })),
-  prAcceptance: z.object({ agentPct: z.number(), humanPct: z.number(), agentMerged: z.number(), humanMerged: z.number() }),
-  testUsefulness: z.object({ actionablePct: z.number(), reported: z.number(), falsePositive: z.number() }),
+  taskSuccessByType: z.array(
+    z.object({
+      category: z.string(),
+      tasks: z.number(),
+      successPct: z.number(),
+      avgCostUsd: z.number(),
+      reworkPct: z.number(),
+    }),
+  ),
+  providers: z.array(
+    z.object({
+      provider: ProviderSchema,
+      sessions: z.number(),
+      successPct: z.number(),
+      avgMinutes: z.number(),
+      costUsd: z.number(),
+      humanInterventions: z.number(),
+    }),
+  ),
+  prAcceptance: z.object({
+    agentPct: z.number(),
+    humanPct: z.number(),
+    agentMerged: z.number(),
+    humanMerged: z.number(),
+  }),
+  testUsefulness: z.object({
+    actionablePct: z.number(),
+    reported: z.number(),
+    falsePositive: z.number(),
+  }),
   timeToVerifyMinP50: z.number(),
   costPerVerifiedTaskUsd: z.number(),
   spendByDay: z.array(z.object({ date: z.string(), agentUsd: z.number(), browserUsd: z.number() })),
@@ -429,17 +539,36 @@ export const BillingSchema = z.object({
   periodEnd: z.string(),
   subscriptionUsd: z.number(),
   usage: z.array(MeterUsageSchema),
-  spend: z.object({ usageCostUsd: z.number(), projectedUsd: z.number(), budgetUsd: z.number(), hardCap: z.boolean(), alertAtPct: z.array(z.number()), pctOfBudget: z.number() }),
+  spend: z.object({
+    usageCostUsd: z.number(),
+    projectedUsd: z.number(),
+    budgetUsd: z.number(),
+    hardCap: z.boolean(),
+    alertAtPct: z.array(z.number()),
+    pctOfBudget: z.number(),
+  }),
   dailyCost: z.array(z.object({ date: z.string(), costUsd: z.number() })),
-  costByProject: z.array(z.object({ projectId: z.string(), name: z.string(), costUsd: z.number() })),
+  costByProject: z.array(
+    z.object({ projectId: z.string(), name: z.string(), costUsd: z.number() }),
+  ),
   costByProvider: z.array(z.object({ provider: z.string(), costUsd: z.number() })),
   invoices: z.array(InvoiceSchema),
   paymentMethod: z.object({ brand: z.string(), last4: z.string(), expires: z.string() }).nullable(),
-  limits: z.array(z.object({ key: z.string(), label: z.string(), used: z.number(), limit: z.number().nullable() })),
+  limits: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      used: z.number(),
+      limit: z.number().nullable(),
+    }),
+  ),
 });
 export type Billing = z.infer<typeof BillingSchema>;
 
-export const ChangePlanInputSchema = z.object({ plan: PlanIdSchema, billingCycle: z.enum(["monthly", "annual"]) });
+export const ChangePlanInputSchema = z.object({
+  plan: PlanIdSchema,
+  billingCycle: z.enum(["monthly", "annual"]),
+});
 export const BudgetInputSchema = z.object({
   monthlyLimitUsd: z.number({ error: "Enter an amount" }).min(0).max(1_000_000),
   hardCap: z.boolean(),
@@ -452,7 +581,9 @@ export const NewTaskInputSchema = z.object({
   repositoryId: z.string().min(1, "Choose a repository"),
   title: z.string().trim().min(5, "Give the task a clear title (5+ characters)").max(140),
   description: z.string().trim().min(15, "Describe the goal in at least 15 characters"),
-  acceptanceCriteria: z.array(z.string().trim().min(3)).min(1, "Add at least one acceptance criterion"),
+  acceptanceCriteria: z
+    .array(z.string().trim().min(3))
+    .min(1, "Add at least one acceptance criterion"),
   constraints: z.array(z.string().trim().min(3)).default([]),
   priority: PrioritySchema,
   agentId: z.string().min(1, "Choose an agent"),
@@ -460,7 +591,9 @@ export const NewTaskInputSchema = z.object({
   budgetUsd: z.number().min(0.5, "Budget must be at least $0.50").max(200),
   timeoutMin: z.number().min(5).max(240),
   launch: z.boolean(),
-  source: z.enum(["manual", "github_issue", "linear", "jira", "shipsafe_failure", "codekeeper_finding"]).default("manual"),
+  source: z
+    .enum(["manual", "github_issue", "linear", "jira", "shipsafe_failure", "codekeeper_finding"])
+    .default("manual"),
   sourceRef: z.string().nullable().default(null),
   bugId: z.string().nullable().default(null),
   findingId: z.string().nullable().default(null),
@@ -468,7 +601,14 @@ export const NewTaskInputSchema = z.object({
 });
 export type NewTaskInput = z.input<typeof NewTaskInputSchema>;
 
-export const TaskActionSchema = z.enum(["launch", "cancel", "retry", "create_pr", "mark_ready", "archive"]);
+export const TaskActionSchema = z.enum([
+  "launch",
+  "cancel",
+  "retry",
+  "create_pr",
+  "mark_ready",
+  "archive",
+]);
 export type TaskAction = z.infer<typeof TaskActionSchema>;
 export const TaskActionInputSchema = z.object({
   action: TaskActionSchema,
@@ -479,14 +619,21 @@ export type TaskActionInput = z.infer<typeof TaskActionInputSchema>;
 
 export const ApprovalDecisionInputSchema = z
   .object({ decision: z.enum(["approved", "rejected"]), comment: z.string().trim().default("") })
-  .refine((v) => v.decision === "approved" || v.comment.length >= 3, { message: "Say why (at least 3 characters)", path: ["comment"] });
+  .refine((v) => v.decision === "approved" || v.comment.length >= 3, {
+    message: "Say why (at least 3 characters)",
+    path: ["comment"],
+  });
 export type ApprovalDecisionInput = z.input<typeof ApprovalDecisionInputSchema>;
 
 export const SessionInputSchema = z.object({ answer: z.string().trim().min(2, "Type an answer") });
 
 export const FindingActionInputSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("create_task"), agentId: z.string().optional() }),
-  z.object({ action: z.literal("suppress"), reason: z.string().trim().min(5, "Explain why (5+ characters)"), expiresInDays: z.number().int().min(1).max(365) }),
+  z.object({
+    action: z.literal("suppress"),
+    reason: z.string().trim().min(5, "Explain why (5+ characters)"),
+    expiresInDays: z.number().int().min(1).max(365),
+  }),
   z.object({ action: z.literal("unsuppress") }),
 ]);
 export type FindingActionInput = z.infer<typeof FindingActionInputSchema>;
@@ -498,9 +645,16 @@ export const BugActionInputSchema = z.object({
 });
 export type BugActionInput = z.infer<typeof BugActionInputSchema>;
 
-export const ReviewInputSchema = z.object({ decision: z.enum(["approved", "changes_requested"]), comment: z.string().default("") });
+export const ReviewInputSchema = z.object({
+  decision: z.enum(["approved", "changes_requested"]),
+  comment: z.string().default(""),
+});
 
-export const NewTestRunInputSchema = z.object({ repositoryId: z.string().min(1), branch: z.string().min(1).default("main"), simulateFailure: z.boolean().optional() });
+export const NewTestRunInputSchema = z.object({
+  repositoryId: z.string().min(1),
+  branch: z.string().min(1).default("main"),
+  simulateFailure: z.boolean().optional(),
+});
 
 export const TestSuiteInputSchema = z.object({
   repositoryId: z.string().min(1, "Choose a repository"),
@@ -513,26 +667,50 @@ export const TestSuiteInputSchema = z.object({
   required: z.boolean(),
 });
 export type TestSuiteInput = z.infer<typeof TestSuiteInputSchema>;
-export const TestSuitePatchSchema = z.object({ enabled: z.boolean().optional(), required: z.boolean().optional(), command: z.string().min(2).optional(), timeoutMin: z.number().int().min(1).max(120).optional() });
+export const TestSuitePatchSchema = z.object({
+  enabled: z.boolean().optional(),
+  required: z.boolean().optional(),
+  command: z.string().min(2).optional(),
+  timeoutMin: z.number().int().min(1).max(120).optional(),
+});
 
-export const NewProjectInputSchema = z.object({ name: z.string().trim().min(2, "Name the project"), description: z.string().trim().default("") });
+export const NewProjectInputSchema = z.object({
+  name: z.string().trim().min(2, "Name the project"),
+  description: z.string().trim().default(""),
+});
 
-export const InviteInputSchema = z.object({ email: z.email("Enter a valid email"), role: RoleSchema.exclude(["owner"]) });
+export const InviteInputSchema = z.object({
+  email: z.email("Enter a valid email"),
+  role: RoleSchema.exclude(["owner"]),
+});
 export type InviteInput = z.infer<typeof InviteInputSchema>;
 export const RoleChangeInputSchema = z.object({ role: RoleSchema });
 
 export const PolicyPatchSchema = PolicySchema.omit({ orgId: true }).partial();
 export type PolicyPatch = z.infer<typeof PolicyPatchSchema>;
 
-export const ApiKeyInputSchema = z.object({ name: z.string().trim().min(2, "Name the key"), scopes: z.array(z.string()).min(1, "Choose at least one scope") });
+export const ApiKeyInputSchema = z.object({
+  name: z.string().trim().min(2, "Name the key"),
+  scopes: z.array(z.string()).min(1, "Choose at least one scope"),
+});
 export const ApiKeyCreatedSchema = z.object({ key: ApiKeySchema, secret: z.string() });
 
-export const ConnectIntegrationInputSchema = z.object({ account: z.string().trim().min(2, "Enter the account or workspace") });
+export const ConnectIntegrationInputSchema = z.object({
+  account: z.string().trim().min(2, "Enter the account or workspace"),
+});
 
 export const WorkspacePatchSchema = z.object({ name: z.string().trim().min(2).max(48).optional() });
 
 // ---------------------------------------------------------------- integrations, members, misc
-export const IntegrationCategorySchema = z.enum(["source_control", "agents", "issues", "notifications", "observability", "security", "identity"]);
+export const IntegrationCategorySchema = z.enum([
+  "source_control",
+  "agents",
+  "issues",
+  "notifications",
+  "observability",
+  "security",
+  "identity",
+]);
 export type IntegrationCategory = z.infer<typeof IntegrationCategorySchema>;
 
 export const IntegrationViewSchema = z.object({
@@ -547,9 +725,18 @@ export const IntegrationViewSchema = z.object({
 });
 export type IntegrationView = z.infer<typeof IntegrationViewSchema>;
 
-export const MemberSchema = UserSchema.extend({ role: RoleSchema, joinedAt: z.string(), lastActiveAt: z.string().nullable() });
+export const MemberSchema = UserSchema.extend({
+  role: RoleSchema,
+  joinedAt: z.string(),
+  lastActiveAt: z.string().nullable(),
+});
 export type Member = z.infer<typeof MemberSchema>;
-export const MembersSchema = z.object({ members: z.array(MemberSchema), invitations: z.array(InvitationSchema), seatsPurchased: z.number(), seatsIncluded: z.number().nullable() });
+export const MembersSchema = z.object({
+  members: z.array(MemberSchema),
+  invitations: z.array(InvitationSchema),
+  seatsPurchased: z.number(),
+  seatsIncluded: z.number().nullable(),
+});
 export type Members = z.infer<typeof MembersSchema>;
 
 export const SearchResultSchema = z.object({
@@ -576,12 +763,25 @@ export const ConnectReposInputSchema = z.object({
   projectId: z.string().nullable(),
   newProjectName: z.string().trim().nullable(),
 });
-export const ConnectReposResultSchema = z.object({ projectId: z.string(), repositoryIds: z.array(z.string()) });
+export const ConnectReposResultSchema = z.object({
+  projectId: z.string(),
+  repositoryIds: z.array(z.string()),
+});
 
-export const RepoConfigInputSchema = z.object({ testCommands: z.array(z.string().min(1)).min(1), scanSchedule: z.enum(["daily", "weekly", "on_push", "off"]) });
+export const RepoConfigInputSchema = z.object({
+  testCommands: z.array(z.string().min(1)).min(1),
+  scanSchedule: z.enum(["daily", "weekly", "on_push", "off"]),
+});
 
-export const FirstRunInputSchema = z.object({ repositoryId: z.string(), kind: z.enum(["test", "scan"]) });
-export const FirstRunResultSchema = z.object({ kind: z.enum(["test", "scan"]), id: z.string(), href: z.string() });
+export const FirstRunInputSchema = z.object({
+  repositoryId: z.string(),
+  kind: z.enum(["test", "scan"]),
+});
+export const FirstRunResultSchema = z.object({
+  kind: z.enum(["test", "scan"]),
+  id: z.string(),
+  href: z.string(),
+});
 
 export const OkSchema = z.object({ ok: z.literal(true) });
 
@@ -606,4 +806,3 @@ export const PlanSchema = z.object({
   features: z.array(z.string()),
 });
 export type Plan = z.infer<typeof PlanSchema>;
-

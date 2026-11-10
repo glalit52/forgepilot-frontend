@@ -24,7 +24,7 @@ function CatalogSkeleton() {
       {Array.from({ length: 2 }).map((_, i) => (
         <div key={i} className="flex flex-col gap-3">
           <Skeleton className="h-4 w-40" />
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 3 }).map((__, j) => (
               <Skeleton key={j} className="h-44" />
             ))}
@@ -141,7 +141,7 @@ export default function IntegrationsPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-4">
                     {agents.map((i) => (
                       <IntegrationCard key={i.providerId} integration={i} {...cardProps} />
                     ))}
@@ -154,7 +154,7 @@ export default function IntegrationsPage() {
                   title={INTEGRATION_CATEGORY_LABEL[g.category]}
                   description={`${g.items.length} integration${g.items.length === 1 ? "" : "s"}`}
                 >
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                     {g.items.map((i) => (
                       <IntegrationCard key={i.providerId} integration={i} {...cardProps} />
                     ))}

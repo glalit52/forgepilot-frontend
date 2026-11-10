@@ -57,7 +57,7 @@ function Loading() {
           <KpiCardSkeleton key={i} />
         ))}
       </div>
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
         {Array.from({ length: 5 }).map((_, i) => (
           <Skeleton key={i} className="h-72" />
         ))}
@@ -143,7 +143,7 @@ function Content({ data }: { data: DevPilotOverview }) {
             action={<NewTaskButton label="Create a task" />}
           />
         ) : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
             {BOARD_COLUMNS.map((col) => {
               const items = data.board[col.key] ?? [];
               return (
@@ -189,7 +189,7 @@ function Content({ data }: { data: DevPilotOverview }) {
         )}
       </Section>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Section
           title={
             <span className="inline-flex items-center gap-1.5">

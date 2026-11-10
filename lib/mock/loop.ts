@@ -24,12 +24,47 @@ export const INDEX_MS = Number(process.env.FP_MOCK_INDEX_MS ?? 4_000);
 
 const PROTECTED_HINT = /migration|workflow|\bci\b|infra/i;
 
-export function audit(db: MockDb, orgId: string, actor: ActorRef, action: string, resource: string, detail = "", at = Date.now()) {
-  db.auditLogs.unshift({ id: newId("aud"), orgId, actor, action, resource, at: toIso(at), detail, ip: actor.type === "person" ? "203.0.113.24" : null });
+export function audit(
+  db: MockDb,
+  orgId: string,
+  actor: ActorRef,
+  action: string,
+  resource: string,
+  detail = "",
+  at = Date.now(),
+) {
+  db.auditLogs.unshift({
+    id: newId("aud"),
+    orgId,
+    actor,
+    action,
+    resource,
+    at: toIso(at),
+    detail,
+    ip: actor.type === "person" ? "203.0.113.24" : null,
+  });
 }
 
-export function notify(db: MockDb, orgId: string, kind: string, title: string, body: string, href: string, at = Date.now()) {
-  db.notifications.unshift({ id: newId("ntf"), orgId, userId: null, kind, title, body, href, at: toIso(at), read: false });
+export function notify(
+  db: MockDb,
+  orgId: string,
+  kind: string,
+  title: string,
+  body: string,
+  href: string,
+  at = Date.now(),
+) {
+  db.notifications.unshift({
+    id: newId("ntf"),
+    orgId,
+    userId: null,
+    kind,
+    title,
+    body,
+    href,
+    at: toIso(at),
+    read: false,
+  });
 }
 
 function policyFor(db: MockDb, orgId: string) {
@@ -41,11 +76,18 @@ export function repoName(repo: Repository) {
 }
 
 // ---------------------------------------------------------------- DevPilot
-export function startSession(db: MockDb, task: Task, by: ActorRef, opts: { notes?: string; simulateFailure?: boolean; now: number }): Session {
+export function startSession(
+  db: MockDb,
+  task: Task,
+  by: ActorRef,
+  opts: { notes?: string; simulateFailure?: boolean; now: number },
+): Session {
   const agent = db.agents.find((a) => a.id === task.agentId)!;
   const attempt = db.sessions.filter((s) => s.taskId === task.id).length + 1;
   const id = `sess_${task.id.replace(/^task_/, "")}_${attempt}`;
-  const needsApproval = PROTECTED_HINT.test(`${task.title} ${task.description}`) && !db.approvals.some((a) => a.context.taskId === task.id && a.status === "approved");
+  const needsApproval =
+    PROTECTED_HINT.test(`${task.title} ${task.description}`) &&
+    !db.approvals.some((a) => a.context.taskId === task.id && a.status === "approved");
   const session: Session = {
     id,
     taskId: task.id,
@@ -89,26 +131,52 @@ export function startSession(db: MockDb, task: Task, by: ActorRef, opts: { notes
     branch: task.branch,
   });
   task.status = "running";
-  audit(db, task.orgId, by, attempt > 1 ? "task.retried" : "task.launched", `task:${task.id}`, `${agent.name} · attempt ${attempt}`, opts.now);
-  audit(db, task.orgId, { type: "agent", id: agent.id }, "agent.session_started", `session:${id}`, `workspace ${id.replace(/^sess_/, "wk_")}`, opts.now);
+  audit(
+    db,
+    task.orgId,
+    by,
+    attempt > 1 ? "task.retried" : "task.launched",
+    `task:${task.id}`,
+    `${agent.name} · attempt ${attempt}`,
+    opts.now,
+  );
+  audit(
+    db,
+    task.orgId,
+    { type: "agent", id: agent.id },
+    "agent.session_started",
+    `session:${id}`,
+    `workspace ${id.replace(/^sess_/, "wk_")}`,
+    opts.now,
+  );
   return session;
 }
 
 export function pauseForApproval(db: MockDb, session: Session, now: number) {
   const task = db.tasks.find((t) => t.id === session.taskId)!;
   const policy = policyFor(db, task.orgId);
-  const path = /workflow|ci/i.test(task.title) ? ".github/workflows/ci.yml" : "migrations/0043_auto.py";
+  const path = /workflow|ci/i.test(task.title)
+    ? ".github/workflows/ci.yml"
+    : "migrations/0043_auto.py";
   const approval = {
     id: newId("apr"),
     orgId: task.orgId,
     action: "modify_protected_path" as const,
     status: "pending" as const,
     title: `Agent wants to write ${path}`,
-    context: { taskId: task.id, sessionId: session.id, repositoryId: task.repositoryId, path, diffPreview: `+ # change proposed by ${session.id}` },
+    context: {
+      taskId: task.id,
+      sessionId: session.id,
+      repositoryId: task.repositoryId,
+      path,
+      diffPreview: `+ # change proposed by ${session.id}`,
+    },
     requestedBy: { type: "agent" as const, id: session.agentId, sessionId: session.id },
     requestedAt: toIso(now),
     expiresAt: toIso(now + 24 * 3_600_000),
-    approverRole: policy?.approvalRules.find((r) => r.action === "modify_protected_path")?.approverRole ?? "admin",
+    approverRole:
+      policy?.approvalRules.find((r) => r.action === "modify_protected_path")?.approverRole ??
+      "admin",
     decidedBy: null,
     decidedAt: null,
     comment: null,
@@ -119,8 +187,24 @@ export function pauseForApproval(db: MockDb, session: Session, now: number) {
   session.pausedRemainingMs = Math.max(1000, (session.simulatedEndsAt ?? now) - now);
   session.approvalCheckpointAt = undefined;
   task.status = "waiting_input";
-  audit(db, task.orgId, { type: "agent", id: session.agentId }, "approval.requested", `approval:${approval.id}`, approval.title, now);
-  notify(db, task.orgId, "approval", "Approval needed: protected path", `${task.title} · ${path}`, "/app/approvals", now);
+  audit(
+    db,
+    task.orgId,
+    { type: "agent", id: session.agentId },
+    "approval.requested",
+    `approval:${approval.id}`,
+    approval.title,
+    now,
+  );
+  notify(
+    db,
+    task.orgId,
+    "approval",
+    "Approval needed: protected path",
+    `${task.title} · ${path}`,
+    "/app/approvals",
+    now,
+  );
 }
 
 export function resumeSession(db: MockDb, session: Session, now: number) {
@@ -133,7 +217,13 @@ export function resumeSession(db: MockDb, session: Session, now: number) {
   task.status = "running";
 }
 
-export function endSession(db: MockDb, session: Session, status: "failed" | "cancelled", summary: string, now: number) {
+export function endSession(
+  db: MockDb,
+  session: Session,
+  status: "failed" | "cancelled",
+  summary: string,
+  now: number,
+) {
   const task = db.tasks.find((t) => t.id === session.taskId)!;
   session.status = status;
   session.endedAt = toIso(now);
@@ -143,7 +233,15 @@ export function endSession(db: MockDb, session: Session, status: "failed" | "can
   const ws = db.workspaces.find((w) => w.sessionId === session.id);
   if (ws) ws.state = "cleaned";
   task.status = status;
-  audit(db, task.orgId, { type: "agent", id: session.agentId }, `agent.session_${status}`, `session:${session.id}`, summary, now);
+  audit(
+    db,
+    task.orgId,
+    { type: "agent", id: session.agentId },
+    `agent.session_${status}`,
+    `session:${session.id}`,
+    summary,
+    now,
+  );
 }
 
 export function completeSession(db: MockDb, session: Session, now: number) {
@@ -156,21 +254,47 @@ export function completeSession(db: MockDb, session: Session, now: number) {
   session.endedAt = toIso(now);
   session.tokensIn = Math.round(tokens * 0.8);
   session.tokensOut = Math.round(tokens * 0.2);
-  session.costUsd = Math.round(tokens * (agent.provider === "claude_code" ? 0.000011 : 0.000009) * 100) / 100;
+  session.costUsd =
+    Math.round(tokens * (agent.provider === "claude_code" ? 0.000011 : 0.000009) * 100) / 100;
   session.headSha = fakeSha(session.id + now);
   const isPy = repo.ecosystems[0] === "pypi";
   session.changedFiles = isPy
-    ? [{ path: "app/api/handlers.py", additions: 31, deletions: 8 }, { path: "tests/api/test_handlers.py", additions: 54, deletions: 0 }]
-    : [{ path: "src/components/Feature.tsx", additions: 38, deletions: 11 }, { path: "src/components/Feature.test.tsx", additions: 47, deletions: 0 }, { path: "e2e/feature.spec.ts", additions: 22, deletions: 2 }];
+    ? [
+        { path: "app/api/handlers.py", additions: 31, deletions: 8 },
+        { path: "tests/api/test_handlers.py", additions: 54, deletions: 0 },
+      ]
+    : [
+        { path: "src/components/Feature.tsx", additions: 38, deletions: 11 },
+        { path: "src/components/Feature.test.tsx", additions: 47, deletions: 0 },
+        { path: "e2e/feature.spec.ts", additions: 22, deletions: 2 },
+      ];
   session.summary = `Implemented "${task.title}", added tests for each acceptance criterion and ran them in the workspace.`;
   session.simulatedEndsAt = undefined;
   const ws = db.workspaces.find((w) => w.sessionId === session.id);
   if (ws) ws.state = "cleaned";
-  db.usageRecords.push({ orgId: task.orgId, date: toIso(now).slice(0, 10), projectId: task.projectId, meter: "agent_minutes", provider: agent.provider, units: Math.round(minutes * 10) / 10, costUsd: session.costUsd });
-  audit(db, task.orgId, { type: "agent", id: agent.id }, "agent.session_completed", `session:${session.id}`, session.summary, now);
+  db.usageRecords.push({
+    orgId: task.orgId,
+    date: toIso(now).slice(0, 10),
+    projectId: task.projectId,
+    meter: "agent_minutes",
+    provider: agent.provider,
+    units: Math.round(minutes * 10) / 10,
+    costUsd: session.costUsd,
+  });
+  audit(
+    db,
+    task.orgId,
+    { type: "agent", id: agent.id },
+    "agent.session_completed",
+    `session:${session.id}`,
+    session.summary,
+    now,
+  );
 
   // agent.completed → create or update PR, then trigger ShipSafe (PRD §10.2).
-  let pr = task.pullRequestId ? db.pullRequests.find((p) => p.id === task.pullRequestId) : undefined;
+  let pr = task.pullRequestId
+    ? db.pullRequests.find((p) => p.id === task.pullRequestId)
+    : undefined;
   if (!pr && task.bugId) {
     const bug = db.bugs.find((b) => b.id === task.bugId);
     pr = bug?.pullRequestId ? db.pullRequests.find((p) => p.id === bug.pullRequestId) : undefined;
@@ -183,7 +307,15 @@ export function completeSession(db: MockDb, session: Session, now: number) {
     pr.additions += additions;
     pr.deletions += deletions;
     pr.checkStatus = "queued";
-    audit(db, task.orgId, { type: "agent", id: agent.id }, "pull_request.synchronize", `pr:${pr.id}`, `pushed ${session.headSha.slice(0, 7)} to #${pr.number}`, now);
+    audit(
+      db,
+      task.orgId,
+      { type: "agent", id: agent.id },
+      "pull_request.synchronize",
+      `pr:${pr.id}`,
+      `pushed ${session.headSha.slice(0, 7)} to #${pr.number}`,
+      now,
+    );
   } else {
     const number = 400 + db.pullRequests.length;
     pr = {
@@ -214,11 +346,23 @@ export function completeSession(db: MockDb, session: Session, now: number) {
     };
     db.pullRequests.push(pr);
     task.pullRequestId = pr.id;
-    audit(db, task.orgId, { type: "agent", id: agent.id }, "pull_request.opened", `pr:${pr.id}`, `#${number} ${task.title}`, now);
+    audit(
+      db,
+      task.orgId,
+      { type: "agent", id: agent.id },
+      "pull_request.opened",
+      `pr:${pr.id}`,
+      `#${number} ${task.title}`,
+      now,
+    );
   }
   task.status = "verifying";
   const previous = pr.latestRunId ? db.testRuns.find((r) => r.id === pr!.latestRunId) : undefined;
-  startTestRun(db, repo, pr, previous ? "pull_request.synchronize" : "pull_request.opened", { now, simulateFailure: session.simulateFailure, retestOf: previous?.id ?? null });
+  startTestRun(db, repo, pr, previous ? "pull_request.synchronize" : "pull_request.opened", {
+    now,
+    simulateFailure: session.simulateFailure,
+    retestOf: previous?.id ?? null,
+  });
 }
 
 // ---------------------------------------------------------------- ShipSafe
@@ -251,7 +395,11 @@ export function startTestRun(
     startedAt: toIso(opts.now),
     finishedAt: null,
     durationSec: null,
-    selectedSuites: suites.map((s) => ({ suiteId: s.id, reason: s.type === "unit" ? "Always run for any change" : `Changed files match ${s.pathRules[0]}` })),
+    selectedSuites: suites.map((s) => ({
+      suiteId: s.id,
+      reason:
+        s.type === "unit" ? "Always run for any change" : `Changed files match ${s.pathRules[0]}`,
+    })),
     retestOf: opts.retestOf ?? null,
     checkRun: { name: "ForgePilot ShipSafe", conclusion: null, detailsUrl: "" },
     totals: { passed: 0, failed: 0, flaky: 0, skipped: 0 },
@@ -265,20 +413,42 @@ export function startTestRun(
     pr.latestRunId = run.id;
     pr.checkStatus = "running";
   }
-  audit(db, repo.orgId, { type: "system", id: "shipsafe" }, "test_run.started", `run:${run.id}`, `${trigger} · ${run.headSha.slice(0, 7)}`, opts.now);
+  audit(
+    db,
+    repo.orgId,
+    { type: "system", id: "shipsafe" },
+    "test_run.started",
+    `run:${run.id}`,
+    `${trigger} · ${run.headSha.slice(0, 7)}`,
+    opts.now,
+  );
   return run;
 }
 
 export function completeTestRun(db: MockDb, run: TestRun, now: number) {
   const repo = db.repositories.find((r) => r.id === run.repositoryId)!;
-  const pr = run.pullRequestId ? db.pullRequests.find((p) => p.id === run.pullRequestId) : undefined;
+  const pr = run.pullRequestId
+    ? db.pullRequests.find((p) => p.id === run.pullRequestId)
+    : undefined;
   const suites = db.testSuites.filter((s) => run.selectedSuites.some((x) => x.suiteId === s.id));
   const fail = !!run.simulateFailure;
   const durationSec = Math.round((now - Date.parse(run.startedAt)) / 1000) + 140;
   const results: TestResult[] = [];
   suites.forEach((s, si) => {
     for (let i = 0; i < 6; i++)
-      results.push({ id: newId("res"), runId: run.id, suiteId: s.id, name: `${s.type} › case ${i + 1}`, outcome: "passed", classification: null, durationMs: 80 + ((i + 1) * 337 * (si + 1)) % 3800, retries: 0, error: null, evidence: [], firstFailedAt: null });
+      results.push({
+        id: newId("res"),
+        runId: run.id,
+        suiteId: s.id,
+        name: `${s.type} › case ${i + 1}`,
+        outcome: "passed",
+        classification: null,
+        durationMs: 80 + (((i + 1) * 337 * (si + 1)) % 3800),
+        retries: 0,
+        error: null,
+        evidence: [],
+        firstFailedAt: null,
+      });
   });
   let defect: TestResult | null = null;
   const e2e = suites.find((s) => s.type === "playwright") ?? suites[0];
@@ -313,15 +483,45 @@ export function completeTestRun(db: MockDb, run: TestRun, now: number) {
   run.finishedAt = toIso(now);
   run.durationSec = durationSec;
   run.billedBrowserMinutes = Math.round((durationSec / 60) * 1.6 * 10) / 10;
-  run.checkRun = { name: "ForgePilot ShipSafe", conclusion: fail ? "failure" : "success", detailsUrl: `/app/shipsafe/runs/${run.id}` };
+  run.checkRun = {
+    name: "ForgePilot ShipSafe",
+    conclusion: fail ? "failure" : "success",
+    detailsUrl: `/app/shipsafe/runs/${run.id}`,
+  };
   run.simulatedEndsAt = undefined;
-  db.usageRecords.push({ orgId: run.orgId, date: toIso(now).slice(0, 10), projectId: repo.projectId, meter: "browser_minutes", provider: "shipsafe", units: run.billedBrowserMinutes, costUsd: Math.round(run.billedBrowserMinutes * 0.02 * 100) / 100 });
-  db.usageRecords.push({ orgId: run.orgId, date: toIso(now).slice(0, 10), projectId: repo.projectId, meter: "test_runs", provider: "shipsafe", units: 1, costUsd: 0 });
-  audit(db, run.orgId, { type: "system", id: "shipsafe" }, fail ? "test.failed" : "test.passed", `run:${run.id}`, `${run.totals.passed} passed · ${run.totals.failed} failed`, now);
+  db.usageRecords.push({
+    orgId: run.orgId,
+    date: toIso(now).slice(0, 10),
+    projectId: repo.projectId,
+    meter: "browser_minutes",
+    provider: "shipsafe",
+    units: run.billedBrowserMinutes,
+    costUsd: Math.round(run.billedBrowserMinutes * 0.02 * 100) / 100,
+  });
+  db.usageRecords.push({
+    orgId: run.orgId,
+    date: toIso(now).slice(0, 10),
+    projectId: repo.projectId,
+    meter: "test_runs",
+    provider: "shipsafe",
+    units: 1,
+    costUsd: 0,
+  });
+  audit(
+    db,
+    run.orgId,
+    { type: "system", id: "shipsafe" },
+    fail ? "test.failed" : "test.passed",
+    `run:${run.id}`,
+    `${run.totals.passed} passed · ${run.totals.failed} failed`,
+    now,
+  );
 
   if (!pr) return;
   pr.checkStatus = run.status;
-  const tasks = db.tasks.filter((t) => t.pullRequestId === pr.id && ["verifying", "running"].includes(t.status));
+  const tasks = db.tasks.filter(
+    (t) => t.pullRequestId === pr.id && ["verifying", "running"].includes(t.status),
+  );
   if (fail && defect) {
     // test.failed → create linked defect and offer a DevPilot fix task (no auto-loop).
     const bug: Bug = {
@@ -335,7 +535,12 @@ export function completeTestRun(db: MockDb, run: TestRun, now: number) {
       severity: "high",
       status: "open",
       commitSha: run.headSha,
-      reproSteps: ["Open the preview URL for this PR", "Change the setting and save", "Reload the page", "The default value is shown instead of the saved one"],
+      reproSteps: [
+        "Open the preview URL for this PR",
+        "Change the setting and save",
+        "Reload the page",
+        "The default value is shown instead of the saved one",
+      ],
       stackTrace: `Error: expect(received).toBe(expected)\n    at ${defect.name.split(" ›")[0]}:31:18`,
       suspectedCause: "The save handler writes to local state but the request is never awaited.",
       createdAt: toIso(now),
@@ -347,25 +552,59 @@ export function completeTestRun(db: MockDb, run: TestRun, now: number) {
       t.status = "failed";
       if (!t.bugId) t.bugId = bug.id;
     });
-    notify(db, run.orgId, "test_failed", `ShipSafe failed on PR #${pr.number}`, `${pr.title} · 1 product defect`, `/app/pull-requests/${pr.id}`, now);
+    notify(
+      db,
+      run.orgId,
+      "test_failed",
+      `ShipSafe failed on PR #${pr.number}`,
+      `${pr.title} · 1 product defect`,
+      `/app/pull-requests/${pr.id}`,
+      now,
+    );
   } else {
     // test.passed → update verification status and notify reviewers. Never merge automatically.
     db.bugs
       .filter((b) => b.pullRequestId === pr.id && b.status === "fix_in_progress")
       .forEach((b) => {
         b.status = "resolved";
-        audit(db, run.orgId, { type: "system", id: "shipsafe" }, "bug.resolved", `bug:${b.id}`, `verified by ${run.id}`, now);
+        audit(
+          db,
+          run.orgId,
+          { type: "system", id: "shipsafe" },
+          "bug.resolved",
+          `bug:${b.id}`,
+          `verified by ${run.id}`,
+          now,
+        );
       });
     tasks.forEach((t) => (t.status = "review_ready"));
     db.tasks
-      .filter((t) => t.bugId && t.status === "verifying" && db.bugs.find((b) => b.id === t.bugId)?.pullRequestId === pr.id)
+      .filter(
+        (t) =>
+          t.bugId &&
+          t.status === "verifying" &&
+          db.bugs.find((b) => b.id === t.bugId)?.pullRequestId === pr.id,
+      )
       .forEach((t) => (t.status = "review_ready"));
-    notify(db, run.orgId, "review_ready", `PR #${pr.number} passed ShipSafe`, `${pr.title} · ready for human review`, `/app/pull-requests/${pr.id}`, now);
+    notify(
+      db,
+      run.orgId,
+      "review_ready",
+      `PR #${pr.number} passed ShipSafe`,
+      `${pr.title} · ready for human review`,
+      `/app/pull-requests/${pr.id}`,
+      now,
+    );
   }
 }
 
 // ---------------------------------------------------------------- CodeKeeper
-export function startScan(db: MockDb, repo: Repository, trigger: "manual" | "push" | "schedule" | "onboarding", now: number) {
+export function startScan(
+  db: MockDb,
+  repo: Repository,
+  trigger: "manual" | "push" | "schedule" | "onboarding",
+  now: number,
+) {
   const scan = {
     id: newId("scan"),
     repositoryId: repo.id,
@@ -379,20 +618,43 @@ export function startScan(db: MockDb, repo: Repository, trigger: "manual" | "pus
     scoreAfter: null,
     scoreDelta: null,
     changes: [],
-    config: { ecosystems: repo.ecosystems, checks: ["dependencies", "advisories", "ci", "tests", "docs"] },
+    config: {
+      ecosystems: repo.ecosystems,
+      checks: ["dependencies", "advisories", "ci", "tests", "docs"],
+    },
     simulatedEndsAt: now + SCAN_MS,
   };
   db.scans.unshift(scan);
-  audit(db, repo.orgId, { type: "system", id: "codekeeper" }, "scan.started", `repo:${repo.id}`, trigger, now);
+  audit(
+    db,
+    repo.orgId,
+    { type: "system", id: "codekeeper" },
+    "scan.started",
+    `repo:${repo.id}`,
+    trigger,
+    now,
+  );
   return scan;
 }
 
 export function recomputeHealth(db: MockDb, repo: Repository) {
-  const open = db.findings.filter((f) => f.repositoryId === repo.id && (f.status === "open" || f.status === "task_created"));
+  const open = db.findings.filter(
+    (f) => f.repositoryId === repo.id && (f.status === "open" || f.status === "task_created"),
+  );
   const weight = { critical: 30, high: 18, medium: 8, low: 3 } as const;
   const h = {
-    dependencies: Math.max(30, 100 - 7 * open.filter((f) => f.category === "outdated" || f.category === "vulnerability").length),
-    security: Math.max(20, 100 - open.filter((f) => f.category === "vulnerability").reduce((s, f) => s + weight[f.severity], 0)),
+    dependencies: Math.max(
+      30,
+      100 -
+        7 * open.filter((f) => f.category === "outdated" || f.category === "vulnerability").length,
+    ),
+    security: Math.max(
+      20,
+      100 -
+        open
+          .filter((f) => f.category === "vulnerability")
+          .reduce((s, f) => s + weight[f.severity], 0),
+    ),
     buildStability: open.some((f) => f.category === "build") ? 74 : 93,
     tests: open.some((f) => f.category === "tests") ? 71 : 88,
     docs: repo.health.docs,
@@ -404,21 +666,46 @@ export function completeScan(db: MockDb, scan: MockDb["scans"][number], now: num
   const repo = db.repositories.find((r) => r.id === scan.repositoryId)!;
   const before = repo.health.score;
   recomputeHealth(db, repo);
-  const resolved = db.findings.filter((f) => f.repositoryId === repo.id && f.status === "resolved" && Date.parse(f.detectedAt) < now).length;
+  const resolved = db.findings.filter(
+    (f) => f.repositoryId === repo.id && f.status === "resolved" && Date.parse(f.detectedAt) < now,
+  ).length;
   scan.status = "completed";
   scan.finishedAt = toIso(now);
   scan.commitSha = repo.indexedSha;
-  scan.findingsCount = db.findings.filter((f) => f.repositoryId === repo.id && f.status !== "resolved").length;
+  scan.findingsCount = db.findings.filter(
+    (f) => f.repositoryId === repo.id && f.status !== "resolved",
+  ).length;
   scan.scoreAfter = repo.health.score;
   scan.scoreDelta = repo.health.score - before;
-  scan.changes = scan.scoreDelta > 0 ? [`${resolved} finding(s) resolved since the last scan`] : scan.scoreDelta < 0 ? ["New findings matched"] : ["No change"];
+  scan.changes =
+    scan.scoreDelta > 0
+      ? [`${resolved} finding(s) resolved since the last scan`]
+      : scan.scoreDelta < 0
+        ? ["New findings matched"]
+        : ["No change"];
   scan.simulatedEndsAt = undefined;
   const week = toIso(now).slice(0, 10);
   const last = db.healthHistory.filter((h) => h.repositoryId === repo.id).at(-1);
   if (last && last.weekStart === week) last.score = repo.health.score;
   else db.healthHistory.push({ repositoryId: repo.id, weekStart: week, score: repo.health.score });
-  db.usageRecords.push({ orgId: repo.orgId, date: week, projectId: repo.projectId, meter: "scan_runs", provider: "codekeeper", units: 1, costUsd: 0 });
-  audit(db, repo.orgId, { type: "system", id: "codekeeper" }, "scan.completed", `repo:${repo.id}`, `score ${before} → ${repo.health.score}`, now);
+  db.usageRecords.push({
+    orgId: repo.orgId,
+    date: week,
+    projectId: repo.projectId,
+    meter: "scan_runs",
+    provider: "codekeeper",
+    units: 1,
+    costUsd: 0,
+  });
+  audit(
+    db,
+    repo.orgId,
+    { type: "system", id: "codekeeper" },
+    "scan.completed",
+    `repo:${repo.id}`,
+    `score ${before} → ${repo.health.score}`,
+    now,
+  );
 }
 
 /** Simulated GitHub merge webhook: GitHub is the source of truth for merge state. */
@@ -438,7 +725,15 @@ export function applyMerge(db: MockDb, pr: PullRequest, by: string, now: number)
         if (f) f.status = "resolved";
       }
     });
-  audit(db, pr.orgId, { type: "person", id: by }, "pull_request.merged", `pr:${pr.id}`, `#${pr.number} merged in GitHub`, now);
+  audit(
+    db,
+    pr.orgId,
+    { type: "person", id: by },
+    "pull_request.merged",
+    `pr:${pr.id}`,
+    `#${pr.number} merged in GitHub`,
+    now,
+  );
   // MAINTAIN: CodeKeeper rescans the updated repository.
   startScan(db, repo, "push", now);
 }

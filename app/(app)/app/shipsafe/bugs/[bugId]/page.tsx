@@ -272,7 +272,7 @@ export default function BugDetailPage() {
         </Section>
       </Card>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="flex min-w-0 flex-col gap-6 lg:col-span-2">
           <Section title="Reproduction steps">
             <ol className="flex flex-col gap-2 rounded-lg border p-4 text-sm">
@@ -305,7 +305,7 @@ export default function BugDetailPage() {
                 </pre>
               )}
               {screenshots.length > 0 && (
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {screenshots.map((s) => (
                     <figure key={s.ref} className="flex flex-col gap-1">
                       <div

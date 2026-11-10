@@ -91,17 +91,19 @@ export function hrefForResource(resource: string): string | null {
   const [kind, id] = resource.split(":");
   if (!id) return null;
   return (
-    {
-      task: `/app/devpilot/tasks/${id}`,
-      session: `/app/devpilot/sessions/${id}`,
-      pr: `/app/pull-requests/${id}`,
-      run: `/app/shipsafe/runs/${id}`,
-      bug: `/app/shipsafe/bugs/${id}`,
-      approval: "/app/approvals",
-      repo: `/app/repositories/${id}`,
-      finding: `/app/codekeeper/findings?finding=${id}`,
-    } as Record<string, string>
-  )[kind] ?? null;
+    (
+      {
+        task: `/app/devpilot/tasks/${id}`,
+        session: `/app/devpilot/sessions/${id}`,
+        pr: `/app/pull-requests/${id}`,
+        run: `/app/shipsafe/runs/${id}`,
+        bug: `/app/shipsafe/bugs/${id}`,
+        approval: "/app/approvals",
+        repo: `/app/repositories/${id}`,
+        finding: `/app/codekeeper/findings?finding=${id}`,
+      } as Record<string, string>
+    )[kind] ?? null
+  );
 }
 
 export function activity(db: MockDb, logs: AuditLog[]): ActivityItem[] {
@@ -114,7 +116,8 @@ export function activity(db: MockDb, logs: AuditLog[]): ActivityItem[] {
 }
 
 // ---------------------------------------------------------------- helpers
-export const inOrg = <T extends { orgId: string }>(xs: T[], orgId: string) => xs.filter((x) => x.orgId === orgId);
+export const inOrg = <T extends { orgId: string }>(xs: T[], orgId: string) =>
+  xs.filter((x) => x.orgId === orgId);
 
 function repoOf(db: MockDb, id: string) {
   return db.repositories.find((r) => r.id === id)!;
@@ -129,7 +132,9 @@ export function failureClasses(db: MockDb, runId: string) {
 }
 
 export function runListItem(db: MockDb, run: TestRun): TestRunListItem {
-  const pr = run.pullRequestId ? db.pullRequests.find((p) => p.id === run.pullRequestId) : undefined;
+  const pr = run.pullRequestId
+    ? db.pullRequests.find((p) => p.id === run.pullRequestId)
+    : undefined;
   return {
     ...run,
     repositoryName: repoOf(db, run.repositoryId).fullName,
@@ -149,38 +154,79 @@ export function releasePolicy(db: MockDb, pr: PullRequest): PolicyCheck[] {
     .map((s) => {
       const rs = results.filter((r) => r.suiteId === s.id);
       const failed = rs.some((r) => r.outcome === "failed");
-      const status: PolicyCheck["status"] = !run || run.status === "running" || run.status === "queued" ? "pending" : run.status === "errored" ? "pending" : failed ? "failed" : rs.length ? "passed" : run.status === "failed" ? "failed" : "passed";
-      return { name: `ShipSafe / ${s.type === "playwright" ? "e2e" : s.type}`, required: s.required, status, detail: `${s.name} · ${rs.filter((r) => r.outcome === "passed").length}/${rs.length || s.testCount} passed` };
+      const status: PolicyCheck["status"] =
+        !run || run.status === "running" || run.status === "queued"
+          ? "pending"
+          : run.status === "errored"
+            ? "pending"
+            : failed
+              ? "failed"
+              : rs.length
+                ? "passed"
+                : run.status === "failed"
+                  ? "failed"
+                  : "passed";
+      return {
+        name: `ShipSafe / ${s.type === "playwright" ? "e2e" : s.type}`,
+        required: s.required,
+        status,
+        detail: `${s.name} · ${rs.filter((r) => r.outcome === "passed").length}/${rs.length || s.testCount} passed`,
+      };
     });
-  const openBugs = db.bugs.filter((b) => b.pullRequestId === pr.id && (b.status === "open" || b.status === "fix_in_progress")).length;
-  checks.push({ name: "No open product defects", required: true, status: openBugs ? "failed" : run?.status === "running" ? "pending" : "passed", detail: openBugs ? `${openBugs} open bug(s) linked to this PR` : "No linked defects" });
+  const openBugs = db.bugs.filter(
+    (b) => b.pullRequestId === pr.id && (b.status === "open" || b.status === "fix_in_progress"),
+  ).length;
+  checks.push({
+    name: "No open product defects",
+    required: true,
+    status: openBugs ? "failed" : run?.status === "running" ? "pending" : "passed",
+    detail: openBugs ? `${openBugs} open bug(s) linked to this PR` : "No linked defects",
+  });
   checks.push({
     name: "Human review",
     required: policy?.requirePrApproval ?? true,
-    status: pr.reviewState === "approved" ? "passed" : pr.reviewState === "changes_requested" ? "failed" : "pending",
-    detail: pr.reviewState === "approved" ? "Approved in GitHub" : "Waiting for a reviewer. Passing checks never merge automatically.",
+    status:
+      pr.reviewState === "approved"
+        ? "passed"
+        : pr.reviewState === "changes_requested"
+          ? "failed"
+          : "pending",
+    detail:
+      pr.reviewState === "approved"
+        ? "Approved in GitHub"
+        : "Waiting for a reviewer. Passing checks never merge automatically.",
   });
   return checks;
 }
 
 export function prListItem(db: MockDb, pr: PullRequest): PullRequestListItem {
-  const latestRun = pr.latestRunId ? db.testRuns.find((r) => r.id === pr.latestRunId) ?? null : null;
+  const latestRun = pr.latestRunId
+    ? (db.testRuns.find((r) => r.id === pr.latestRunId) ?? null)
+    : null;
   const policy = releasePolicy(db, pr);
   return {
     ...pr,
     repositoryName: repoOf(db, pr.repositoryId).fullName,
     authorResolved: resolveActor(db, { type: pr.author.type, id: pr.author.id }),
-    taskTitle: pr.taskId ? db.tasks.find((t) => t.id === pr.taskId)?.title ?? null : null,
+    taskTitle: pr.taskId ? (db.tasks.find((t) => t.id === pr.taskId)?.title ?? null) : null,
     latestRun,
-    openBugs: db.bugs.filter((b) => b.pullRequestId === pr.id && b.status !== "resolved" && b.status !== "wont_fix").length,
-    requiredChecksMet: policy.filter((c) => c.required && c.name !== "Human review").every((c) => c.status === "passed"),
+    openBugs: db.bugs.filter(
+      (b) => b.pullRequestId === pr.id && b.status !== "resolved" && b.status !== "wont_fix",
+    ).length,
+    requiredChecksMet: policy
+      .filter((c) => c.required && c.name !== "Human review")
+      .every((c) => c.status === "passed"),
   };
 }
 
 export function taskListItem(db: MockDb, t: Task): TaskListItem {
   const repo = repoOf(db, t.repositoryId);
-  const sessions = db.sessions.filter((s) => s.taskId === t.id).sort((a, b) => a.attempt - b.attempt);
-  const pr = t.pullRequestId ? db.pullRequests.find((p) => p.id === t.pullRequestId) ?? null : null;
+  const sessions = db.sessions
+    .filter((s) => s.taskId === t.id)
+    .sort((a, b) => a.attempt - b.attempt);
+  const pr = t.pullRequestId
+    ? (db.pullRequests.find((p) => p.id === t.pullRequestId) ?? null)
+    : null;
   const run = pr?.latestRunId ? db.testRuns.find((r) => r.id === pr.latestRunId) : undefined;
   return {
     ...t,
@@ -217,7 +263,7 @@ export function bugListItem(db: MockDb, b: MockDb["bugs"][number]): BugListItem 
     repositoryName: repoOf(db, b.repositoryId).fullName,
     pullRequestNumber: pr?.number ?? null,
     testName: db.testResults.find((r) => r.id === b.resultId)?.name ?? "",
-    taskStatus: b.taskId ? db.tasks.find((t) => t.id === b.taskId)?.status ?? null : null,
+    taskStatus: b.taskId ? (db.tasks.find((t) => t.id === b.taskId)?.status ?? null) : null,
   };
 }
 
@@ -227,14 +273,18 @@ export function findingListItem(db: MockDb, f: MockDb["findings"][number]): Find
     ...f,
     repositoryName: repo.fullName,
     projectName: db.projects.find((p) => p.id === repo.projectId)?.name ?? "",
-    taskStatus: f.taskId ? db.tasks.find((t) => t.id === f.taskId)?.status ?? null : null,
+    taskStatus: f.taskId ? (db.tasks.find((t) => t.id === f.taskId)?.status ?? null) : null,
   };
 }
 
 export function repositorySummary(db: MockDb, id: string): RepositorySummary {
   const r = repoOf(db, id);
-  const open = db.findings.filter((f) => f.repositoryId === id && (f.status === "open" || f.status === "task_created"));
-  const runs = db.testRuns.filter((x) => x.repositoryId === id).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const open = db.findings.filter(
+    (f) => f.repositoryId === id && (f.status === "open" || f.status === "task_created"),
+  );
+  const runs = db.testRuns
+    .filter((x) => x.repositoryId === id)
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   const hist = db.healthHistory.filter((h) => h.repositoryId === id);
   return {
     ...r,
@@ -260,7 +310,9 @@ export function verifiedTasks(db: MockDb, orgId: string, from: number, to: numbe
   return inOrg(db.tasks, orgId).filter((t) => {
     const item = taskListItem(db, t);
     if (!item.verified || !t.acceptanceCriteria.length) return false;
-    const run = item.pullRequest?.latestRunId ? db.testRuns.find((r) => r.id === item.pullRequest!.latestRunId) : undefined;
+    const run = item.pullRequest?.latestRunId
+      ? db.testRuns.find((r) => r.id === item.pullRequest!.latestRunId)
+      : undefined;
     const at = Date.parse(run?.finishedAt ?? t.createdAt);
     return at >= from && at < to;
   });
@@ -274,12 +326,19 @@ export function projectSummary(db: MockDb, id: string, now = Date.now()): Projec
   return {
     ...p,
     repositories: repos.length,
-    healthScore: repos.length ? Math.round(repos.reduce((s, r) => s + r.health.score, 0) / repos.length) : null,
+    healthScore: repos.length
+      ? Math.round(repos.reduce((s, r) => s + r.health.score, 0) / repos.length)
+      : null,
     openPrs: prs.length,
     failingChecks: prs.filter((x) => x.checkStatus === "failed").length,
-    activeSessions: db.sessions.filter((s) => s.status === "running" || s.status === "waiting").filter((s) => db.tasks.find((t) => t.id === s.taskId)?.projectId === id).length,
-    openFindings: db.findings.filter((f) => repoIds.has(f.repositoryId) && f.status === "open").length,
-    verifiedThisMonth: verifiedTasks(db, p.orgId, monthStart(now), now + 1).filter((t) => t.projectId === id).length,
+    activeSessions: db.sessions
+      .filter((s) => s.status === "running" || s.status === "waiting")
+      .filter((s) => db.tasks.find((t) => t.id === s.taskId)?.projectId === id).length,
+    openFindings: db.findings.filter((f) => repoIds.has(f.repositoryId) && f.status === "open")
+      .length,
+    verifiedThisMonth: verifiedTasks(db, p.orgId, monthStart(now), now + 1).filter(
+      (t) => t.projectId === id,
+    ).length,
   };
 }
 
@@ -290,17 +349,73 @@ export function lifecycle(db: MockDb, t: Task): LifecycleStep[] {
   const runs = pr ? db.testRuns.filter((r) => r.pullRequestId === pr.id) : [];
   const hadFailure = runs.some((r) => r.status === "failed") || !!t.bugId;
   const s = t.status;
-  const step = (key: LifecycleStep["key"], label: string, state: LifecycleStep["state"], detail: string | null = null, href: string | null = null): LifecycleStep => ({ key, label, state, detail, href });
-  const execDone = !["draft", "queued", "running", "waiting_input"].includes(s) && s !== "cancelled";
+  const step = (
+    key: LifecycleStep["key"],
+    label: string,
+    state: LifecycleStep["state"],
+    detail: string | null = null,
+    href: string | null = null,
+  ): LifecycleStep => ({ key, label, state, detail, href });
+  const execDone =
+    !["draft", "queued", "running", "waiting_input"].includes(s) && s !== "cancelled";
   return [
     step("plan", "Plan", "done", `${t.acceptanceCriteria.length} acceptance criteria`),
-    step("execute", "Execute", s === "running" || s === "waiting_input" ? "current" : execDone ? "done" : s === "cancelled" ? "failed" : "upcoming", s === "waiting_input" ? "Waiting for approval" : null),
-    step("propose", "Propose", pr ? "done" : s === "failed" && !pr ? "failed" : "upcoming", pr ? `PR #${pr.number}` : null, pr ? `/app/pull-requests/${pr.id}` : null),
-    step("verify", "Verify", !run ? "upcoming" : run.status === "running" ? "current" : run.status === "passed" ? "done" : "failed", run ? `ShipSafe ${run.status}` : null, run ? `/app/shipsafe/runs/${run.id}` : null),
-    step("remediate", "Remediate", hadFailure ? (run?.status === "passed" ? "done" : "current") : "skipped", hadFailure ? "Fix loop" : "Not needed"),
-    step("review", "Review", s === "review_ready" ? "current" : s === "completed" ? "done" : "upcoming", s === "review_ready" ? "Human review in GitHub" : null),
-    step("merge", "Merge", s === "completed" ? "done" : "upcoming", s === "completed" ? "Merged in GitHub" : "GitHub is the source of truth"),
-    step("maintain", "Maintain", s === "completed" ? "done" : "upcoming", s === "completed" ? "CodeKeeper rescanned" : null),
+    step(
+      "execute",
+      "Execute",
+      s === "running" || s === "waiting_input"
+        ? "current"
+        : execDone
+          ? "done"
+          : s === "cancelled"
+            ? "failed"
+            : "upcoming",
+      s === "waiting_input" ? "Waiting for approval" : null,
+    ),
+    step(
+      "propose",
+      "Propose",
+      pr ? "done" : s === "failed" && !pr ? "failed" : "upcoming",
+      pr ? `PR #${pr.number}` : null,
+      pr ? `/app/pull-requests/${pr.id}` : null,
+    ),
+    step(
+      "verify",
+      "Verify",
+      !run
+        ? "upcoming"
+        : run.status === "running"
+          ? "current"
+          : run.status === "passed"
+            ? "done"
+            : "failed",
+      run ? `ShipSafe ${run.status}` : null,
+      run ? `/app/shipsafe/runs/${run.id}` : null,
+    ),
+    step(
+      "remediate",
+      "Remediate",
+      hadFailure ? (run?.status === "passed" ? "done" : "current") : "skipped",
+      hadFailure ? "Fix loop" : "Not needed",
+    ),
+    step(
+      "review",
+      "Review",
+      s === "review_ready" ? "current" : s === "completed" ? "done" : "upcoming",
+      s === "review_ready" ? "Human review in GitHub" : null,
+    ),
+    step(
+      "merge",
+      "Merge",
+      s === "completed" ? "done" : "upcoming",
+      s === "completed" ? "Merged in GitHub" : "GitHub is the source of truth",
+    ),
+    step(
+      "maintain",
+      "Maintain",
+      s === "completed" ? "done" : "upcoming",
+      s === "completed" ? "CodeKeeper rescanned" : null,
+    ),
   ];
 }
 

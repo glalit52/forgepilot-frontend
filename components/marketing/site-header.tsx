@@ -24,7 +24,11 @@ export function SiteHeader() {
         </Link>
         <nav aria-label="Site" className="hidden items-center gap-1 md:flex">
           {LINKS.map((l) => (
-            <Link key={l.href} href={l.href} className="text-muted-foreground hover:text-foreground rounded-md px-3 py-2 text-sm">
+            <Link
+              key={l.href}
+              href={l.href}
+              className="text-muted-foreground hover:text-foreground rounded-md px-3 py-2 text-sm"
+            >
               {l.label}
             </Link>
           ))}
@@ -37,15 +41,30 @@ export function SiteHeader() {
           <Button asChild>
             <Link href="/signup">Start free</Link>
           </Button>
-          <Button variant="ghost" size="icon" className="md:hidden" aria-label={open ? "Close menu" : "Open menu"} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
+            aria-label={open ? "Close menu" : "Open menu"}
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+          >
             {open ? <XIcon /> : <MenuIcon />}
           </Button>
         </div>
       </div>
       {open && (
-        <nav aria-label="Site (mobile)" className="flex flex-col gap-1 border-t px-4 py-3 md:hidden">
+        <nav
+          aria-label="Site (mobile)"
+          className="flex flex-col gap-1 border-t px-4 py-3 md:hidden"
+        >
           {LINKS.map((l) => (
-            <Link key={l.href} href={l.href} onClick={() => setOpen(false)} className="hover:bg-accent rounded-md px-3 py-2 text-sm">
+            <Link
+              key={l.href}
+              href={l.href}
+              onClick={() => setOpen(false)}
+              className="hover:bg-accent rounded-md px-3 py-2 text-sm"
+            >
               {l.label}
             </Link>
           ))}
@@ -61,16 +80,42 @@ export function SiteHeader() {
 export function SiteFooter() {
   return (
     <footer className="border-t">
-      <div className="mx-auto grid max-w-6xl gap-8 px-4 py-12 sm:grid-cols-2 md:grid-cols-5">
+      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-4 py-12 sm:grid-cols-2 md:grid-cols-5">
         <div className="md:col-span-2">
           <Logo />
-          <p className="text-muted-foreground mt-3 max-w-xs text-sm">The engineering operations layer for teams building with AI coding agents.</p>
-          <p className="text-muted-foreground mt-4 text-xs">Demo build · all companies, people and data are fictional.</p>
+          <p className="text-muted-foreground mt-3 max-w-xs text-sm">
+            The engineering operations layer for teams building with AI coding agents.
+          </p>
+          <p className="text-muted-foreground mt-4 text-xs">
+            Demo build · all companies, people and data are fictional.
+          </p>
         </div>
         {[
-          ["Product", [["DevPilot", "/#devpilot"], ["ShipSafe", "/#shipsafe"], ["CodeKeeper", "/#codekeeper"], ["Pricing", "/pricing"]]],
-          ["Trust", [["Security", "/security"], ["Permissions", "/security#permissions"], ["Data handling", "/security#data"]]],
-          ["Developers", [["Docs", "/docs"], ["API contract", "/docs#api"], ["Component gallery", "/dev/components"]]],
+          [
+            "Product",
+            [
+              ["DevPilot", "/#devpilot"],
+              ["ShipSafe", "/#shipsafe"],
+              ["CodeKeeper", "/#codekeeper"],
+              ["Pricing", "/pricing"],
+            ],
+          ],
+          [
+            "Trust",
+            [
+              ["Security", "/security"],
+              ["Permissions", "/security#permissions"],
+              ["Data handling", "/security#data"],
+            ],
+          ],
+          [
+            "Developers",
+            [
+              ["Docs", "/docs"],
+              ["API contract", "/docs#api"],
+              ["Component gallery", "/dev/components"],
+            ],
+          ],
         ].map(([title, links]) => (
           <div key={title as string}>
             <h3 className="text-sm font-semibold">{title as string}</h3>

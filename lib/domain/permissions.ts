@@ -35,7 +35,12 @@ export function meetsRole(role: Role | undefined, required: Role) {
   return !!role && RANK[role] >= RANK[required];
 }
 
-export const ROLE_LABEL: Record<Role, string> = { owner: "Owner", admin: "Admin", member: "Member", viewer: "Viewer" };
+export const ROLE_LABEL: Record<Role, string> = {
+  owner: "Owner",
+  admin: "Admin",
+  member: "Member",
+  viewer: "Viewer",
+};
 export const ROLE_DESCRIPTION: Record<Role, string> = {
   owner: "Everything, including billing and deleting the workspace.",
   admin: "Manage members, integrations, policies and approvals.",

@@ -16,7 +16,19 @@ const LEVEL: Record<LogLine["level"], { label: string; cls: string }> = {
 };
 
 /** Terminal-style structured log with auto-scroll (pausable) and redaction notice. */
-export function LogViewer({ lines, live, redactions = 0, className, height = "h-96" }: { lines: LogLine[]; live?: boolean; redactions?: number; className?: string; height?: string }) {
+export function LogViewer({
+  lines,
+  live,
+  redactions = 0,
+  className,
+  height = "h-96",
+}: {
+  lines: LogLine[];
+  live?: boolean;
+  redactions?: number;
+  className?: string;
+  height?: string;
+}) {
   const [follow, setFollow] = useState(true);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -27,10 +39,17 @@ export function LogViewer({ lines, live, redactions = 0, className, height = "h-
       <div className="flex items-center justify-between gap-2 text-xs">
         <span className="text-muted-foreground inline-flex items-center gap-1.5">
           <ShieldCheckIcon className="text-success size-3.5" aria-hidden />
-          Secrets redacted before display{redactions ? ` · ${redactions} redaction${redactions === 1 ? "" : "s"}` : ""}
+          Secrets redacted before display
+          {redactions ? ` · ${redactions} redaction${redactions === 1 ? "" : "s"}` : ""}
         </span>
-        <Button variant="ghost" size="sm" onClick={() => setFollow((f) => !f)} aria-pressed={!follow}>
-          {follow ? <PauseIcon /> : <PlayIcon />} {follow ? "Pause auto-scroll" : "Resume auto-scroll"}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setFollow((f) => !f)}
+          aria-pressed={!follow}
+        >
+          {follow ? <PauseIcon /> : <PlayIcon />}{" "}
+          {follow ? "Pause auto-scroll" : "Resume auto-scroll"}
         </Button>
       </div>
       <div
@@ -39,14 +58,24 @@ export function LogViewer({ lines, live, redactions = 0, className, height = "h-
         aria-live={live ? "polite" : "off"}
         aria-label="Session log"
         tabIndex={0}
-        className={cn("overflow-auto rounded-md border bg-[oklch(0.16_0.01_286)] p-3 font-mono text-xs leading-5 text-[oklch(0.92_0.005_286)]", height)}
+        className={cn(
+          "overflow-auto rounded-md border bg-[oklch(0.16_0.01_286)] p-3 font-mono text-xs leading-5 text-[oklch(0.92_0.005_286)]",
+          height,
+        )}
       >
         {lines.map((l) => (
           <div key={l.seq} className="flex gap-3 whitespace-pre-wrap">
-            <span className="shrink-0 text-[oklch(0.65_0.01_286)] select-none" suppressHydrationWarning>
+            <span
+              className="shrink-0 text-[oklch(0.65_0.01_286)] select-none"
+              suppressHydrationWarning
+            >
               {formatTime(l.at)}
             </span>
-            <span className={cn("shrink-0 font-semibold", LEVEL[l.level].cls, "dark:brightness-110")}>{LEVEL[l.level].label}</span>
+            <span
+              className={cn("shrink-0 font-semibold", LEVEL[l.level].cls, "dark:brightness-110")}
+            >
+              {LEVEL[l.level].label}
+            </span>
             <span className="min-w-0 break-words">{l.text}</span>
           </div>
         ))}

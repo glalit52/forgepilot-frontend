@@ -2,9 +2,15 @@ import Link from "next/link";
 import { Logo } from "@/components/shell/logo";
 import { ThemeToggle } from "@/components/shell/theme-toggle";
 
-export function AuthShell({ children, aside }: { children: React.ReactNode; aside?: React.ReactNode }) {
+export function AuthShell({
+  children,
+  aside,
+}: {
+  children: React.ReactNode;
+  aside?: React.ReactNode;
+}) {
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
+    <div className="grid min-h-screen grid-cols-1 lg:grid-cols-2">
       <div className="flex flex-col">
         <header className="flex h-16 items-center justify-between px-6">
           <Link href="/" aria-label="ForgePilot home">
@@ -17,7 +23,10 @@ export function AuthShell({ children, aside }: { children: React.ReactNode; asid
         </main>
       </div>
       <aside className="bg-muted/40 relative hidden flex-col justify-center gap-6 overflow-hidden border-l p-12 lg:flex">
-        <div className="pointer-events-none absolute inset-0 [background:radial-gradient(50%_40%_at_70%_20%,color-mix(in_oklch,var(--primary)_14%,transparent),transparent)]" aria-hidden />
+        <div
+          className="pointer-events-none absolute inset-0 [background:radial-gradient(50%_40%_at_70%_20%,color-mix(in_oklch,var(--primary)_14%,transparent),transparent)]"
+          aria-hidden
+        />
         {aside}
       </aside>
     </div>
@@ -27,13 +36,17 @@ export function AuthShell({ children, aside }: { children: React.ReactNode; asid
 export function AuthAside() {
   return (
     <div className="relative flex max-w-md flex-col gap-6">
-      <p className="text-2xl font-semibold tracking-tight">“Agents write the first draft. ForgePilot makes sure it&apos;s safe to ship.”</p>
+      <p className="text-2xl font-semibold tracking-tight">
+        “Agents write the first draft. ForgePilot makes sure it&apos;s safe to ship.”
+      </p>
       <ul className="text-muted-foreground flex flex-col gap-3 text-sm">
         <li>• Every PR verified with commit-pinned tests and evidence</li>
         <li>• Agents run in isolated workspaces with budgets and approvals</li>
         <li>• Maintenance findings become verified PRs, not backlog</li>
       </ul>
-      <p className="text-muted-foreground text-xs">Product principle from the ForgePilot PRD, not a customer quote.</p>
+      <p className="text-muted-foreground text-xs">
+        Product principle from the ForgePilot PRD, not a customer quote.
+      </p>
     </div>
   );
 }

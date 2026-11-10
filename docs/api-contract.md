@@ -21,6 +21,7 @@ Guardrails the backend must enforce (not just the UI):
 | Method | Path | Auth | Request | Response | Summary |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/session/personas` | None | — | see below | Demo personas for the sign-in screen. |
+| GET | `/session/status` | None | — | see below | Whether the visitor is signed in and has a workspace (used by onboarding before a workspace exists). |
 | GET | `/session` | Any workspace member | — | `SessionInfo` | Current user, active workspace, role, other workspaces and badge counts. |
 | POST | `/session` | None | `SignInInput` | `SessionInfo` | Sign in as a demo persona (sets fp_session and fp_ws cookies). |
 | POST | `/session/workspace` | Any workspace member | `SwitchWorkspaceInput` | `SessionInfo` | Switch the active workspace. |
@@ -173,6 +174,40 @@ Demo personas for the sign-in screen.
     ],
     "additionalProperties": false
   }
+}
+```
+
+### GET `/session/status`
+
+Whether the visitor is signed in and has a workspace (used by onboarding before a workspace exists).
+
+- **Auth:** None
+- **Response 200:** 
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "signedIn": {
+      "type": "boolean"
+    },
+    "hasWorkspace": {
+      "type": "boolean"
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "signedIn",
+    "hasWorkspace",
+    "name"
+  ],
+  "additionalProperties": false
 }
 ```
 

@@ -117,7 +117,7 @@ export default function CodeKeeperHealthPage() {
 function OverviewSkeleton() {
   return (
     <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading repository health">
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Skeleton className="h-64 lg:col-span-2" />
         <Skeleton className="h-64" />
       </div>
@@ -126,7 +126,7 @@ function OverviewSkeleton() {
           <KpiCardSkeleton key={i} />
         ))}
       </div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
           <Skeleton key={i} className="h-48" />
         ))}
@@ -174,7 +174,7 @@ function OverviewBody({ data }: { data: CodeKeeperOverview }) {
 
   return (
     <>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex-row items-start justify-between gap-4">
             <div className="flex flex-col gap-1">
@@ -249,7 +249,7 @@ function OverviewBody({ data }: { data: CodeKeeperOverview }) {
         title="Repositories"
         description="Sorted by health, lowest first. Scores aren't directly comparable across languages, project types or scan coverage."
       >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {repos.map((r) => (
             <RepoHealthCard
               key={r.id}
@@ -261,7 +261,7 @@ function OverviewBody({ data }: { data: CodeKeeperOverview }) {
         </div>
       </Section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Open findings by severity</CardTitle>
@@ -315,7 +315,7 @@ function OverviewBody({ data }: { data: CodeKeeperOverview }) {
         </Card>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
         <Section
           className="xl:col-span-3"
           title="Prioritised maintenance queue"

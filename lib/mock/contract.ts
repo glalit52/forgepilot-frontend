@@ -26,11 +26,16 @@ function typeName(schema: z.ZodType, names: Map<z.ZodType, string>): string {
   return "inline";
 }
 
-const authLabel = (a: string) => (a === "public" ? "None" : a === "member" ? "Any workspace member" : `Permission \`${a}\``);
+const authLabel = (a: string) =>
+  a === "public" ? "None" : a === "member" ? "Any workspace member" : `Permission \`${a}\``;
 
 export function renderContract(): string {
   const { registry, names } = buildRegistry();
-  const defs = z.toJSONSchema(registry, { unrepresentable: "any", io: "output", uri: (id) => `#/schemas/${id}` }).schemas;
+  const defs = z.toJSONSchema(registry, {
+    unrepresentable: "any",
+    io: "output",
+    uri: (id) => `#/schemas/${id}`,
+  }).schemas;
   const used = new Set<string>();
   const ref = (schema: z.ZodType) => {
     const n = typeName(schema, names);
@@ -38,7 +43,11 @@ export function renderContract(): string {
       used.add(n.replace(/\[\]$/, ""));
       return `[\`${n}\`](#${n.replace(/\[\]$/, "").toLowerCase()})`;
     }
-    return "\n\n```json\n" + JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any", io: "output" }), null, 2) + "\n```";
+    return (
+      "\n\n```json\n" +
+      JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any", io: "output" }), null, 2) +
+      "\n```"
+    );
   };
   const lines = [
     "# ForgePilot API contract",
@@ -68,11 +77,19 @@ export function renderContract(): string {
     const req = r.request ? typeName(r.request, names) : "—";
     const res = typeName(r.response, names);
     const cell = (n: string) => (n === "—" ? "—" : n === "inline" ? "see below" : `\`${n}\``);
-    lines.push(`| ${r.method} | \`${r.path}\` | ${authLabel(r.auth)} | ${cell(req)} | ${cell(res)} | ${r.summary.replace(/\|/g, "\\|")} |`);
+    lines.push(
+      `| ${r.method} | \`${r.path}\` | ${authLabel(r.auth)} | ${cell(req)} | ${cell(res)} | ${r.summary.replace(/\|/g, "\\|")} |`,
+    );
   }
   lines.push("", "## Endpoint details", "");
   for (const r of routes) {
-    lines.push(`### ${r.method} \`${r.path}\``, "", r.summary, "", `- **Auth:** ${authLabel(r.auth)}`);
+    lines.push(
+      `### ${r.method} \`${r.path}\``,
+      "",
+      r.summary,
+      "",
+      `- **Auth:** ${authLabel(r.auth)}`,
+    );
     if (r.request) lines.push(`- **Request body:** ${ref(r.request)}`);
     lines.push(`- **Response 200:** ${ref(r.response)}`, "");
   }
@@ -85,6 +102,7 @@ export function renderContract(): string {
     for (const m of JSON.stringify(defs[id]).matchAll(/#\/schemas\/(\w+)/g)) queue.push(m[1]);
   }
   lines.push("## Schemas", "", "`$ref`s point at other schemas in this section.", "");
-  for (const id of [...include].sort()) lines.push(`### ${id}`, "", "```json", JSON.stringify(defs[id], null, 2), "```", "");
+  for (const id of [...include].sort())
+    lines.push(`### ${id}`, "", "```json", JSON.stringify(defs[id], null, 2), "```", "");
   return lines.join("\n");
 }

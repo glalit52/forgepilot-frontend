@@ -6,11 +6,21 @@ import { ChevronRightIcon } from "lucide-react";
 import { SEGMENT_LABEL } from "@/lib/nav";
 
 type Labels = Record<string, string>;
-const Ctx = createContext<{ labels: Labels; setLabel: (seg: string, label: string) => void }>({ labels: {}, setLabel: () => {} });
+const Ctx = createContext<{ labels: Labels; setLabel: (seg: string, label: string) => void }>({
+  labels: {},
+  setLabel: () => {},
+});
 
 export function BreadcrumbProvider({ children }: { children: React.ReactNode }) {
   const [labels, setLabels] = useState<Labels>({});
-  const value = useMemo(() => ({ labels, setLabel: (seg: string, label: string) => setLabels((l) => (l[seg] === label ? l : { ...l, [seg]: label })) }), [labels]);
+  const value = useMemo(
+    () => ({
+      labels,
+      setLabel: (seg: string, label: string) =>
+        setLabels((l) => (l[seg] === label ? l : { ...l, [seg]: label })),
+    }),
+    [labels],
+  );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
@@ -26,7 +36,10 @@ export function Breadcrumbs({ workspace }: { workspace?: string }) {
   const pathname = usePathname();
   const { labels } = useContext(Ctx);
   const segs = pathname.split("/").filter(Boolean);
-  const crumbs = segs.map((s, i) => ({ href: "/" + segs.slice(0, i + 1).join("/"), label: labels[s] ?? SEGMENT_LABEL[s] ?? s }));
+  const crumbs = segs.map((s, i) => ({
+    href: "/" + segs.slice(0, i + 1).join("/"),
+    label: labels[s] ?? SEGMENT_LABEL[s] ?? s,
+  }));
   return (
     <nav aria-label="Breadcrumb" className="min-w-0">
       <ol className="text-muted-foreground flex min-w-0 items-center gap-1 text-sm">

@@ -25,7 +25,8 @@ async function handle(req: NextRequest, { params }: { params: Promise<{ path: st
     workspace: store.get(WORKSPACE_COOKIE)?.value,
   });
   const res = NextResponse.json(result.body, { status: result.status });
-  for (const c of result.setCookies ?? []) res.cookies.set(c.name, c.value, { path: "/", sameSite: "lax" });
+  for (const c of result.setCookies ?? [])
+    res.cookies.set(c.name, c.value, { path: "/", sameSite: "lax" });
   return res;
 }
 

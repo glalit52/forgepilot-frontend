@@ -160,7 +160,7 @@ export function NewSuiteDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={f("repo")}>Repository</Label>
               <Select value={d.repositoryId} onValueChange={(v) => set("repositoryId", v)}>
@@ -189,7 +189,7 @@ export function NewSuiteDialog({
               <Err id={f("name-err")} msg={errors.name} />
             </div>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={f("type")}>Type</Label>
               <Select
@@ -244,7 +244,7 @@ export function NewSuiteDialog({
             />
             <Err id={f("command-err")} msg={errors.command} />
           </div>
-          <div className="grid gap-4 sm:grid-cols-[1fr_9rem]">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_9rem]">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={f("rules")}>Path rules</Label>
               <Textarea

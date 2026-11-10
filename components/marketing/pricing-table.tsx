@@ -10,7 +10,8 @@ import { formatNumber } from "@/lib/domain/format";
 import { cn } from "@/lib/utils";
 import type { Plan } from "@/lib/schemas";
 
-const fmtLimit = (v: number | null, unit = "") => (v === null ? "Unlimited" : `${formatNumber(v)}${unit}`);
+const fmtLimit = (v: number | null, unit = "") =>
+  v === null ? "Unlimited" : `${formatNumber(v)}${unit}`;
 
 const ROWS: { label: string; get: (p: Plan) => React.ReactNode }[] = [
   { label: "Seats", get: (p) => fmtLimit(p.limits.seats) },
@@ -20,7 +21,10 @@ const ROWS: { label: string; get: (p: Plan) => React.ReactNode }[] = [
   { label: "Browser test minutes / month", get: (p) => fmtLimit(p.limits.browserMinutes, " min") },
   { label: "Verification runs / month", get: (p) => fmtLimit(p.limits.testRuns) },
   { label: "Concurrent agent sessions", get: (p) => fmtLimit(p.limits.concurrentSessions) },
-  { label: "History", get: (p) => (p.limits.historyDays === null ? "Custom" : `${p.limits.historyDays} days`) },
+  {
+    label: "History",
+    get: (p) => (p.limits.historyDays === null ? "Custom" : `${p.limits.historyDays} days`),
+  },
 ];
 
 const FEATURES: { label: string; from: Plan["id"] }[] = [
@@ -43,30 +47,56 @@ export function PricingTable() {
     <>
       <div className="mt-10 flex items-center justify-center gap-3 text-sm">
         <Label htmlFor="cycle">Monthly</Label>
-        <Switch id="cycle" checked={annual} onCheckedChange={setAnnual} aria-label="Bill annually" />
+        <Switch
+          id="cycle"
+          checked={annual}
+          onCheckedChange={setAnnual}
+          aria-label="Bill annually"
+        />
         <Label htmlFor="cycle">
-          Annual <span className="bg-success-soft text-success-foreground ml-1 rounded px-1.5 py-0.5 text-xs">2 months free</span>
+          Annual{" "}
+          <span className="bg-success-soft text-success-foreground ml-1 rounded px-1.5 py-0.5 text-xs">
+            2 months free
+          </span>
         </Label>
       </div>
-      <div className="mt-8 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-6">
         {PLANS.map((p) => {
           const price = annual ? p.priceAnnualMonthlyUsd : p.priceMonthlyUsd;
           return (
-            <div key={p.id} className={cn("bg-card flex flex-col gap-4 rounded-xl border p-5", p.highlighted && "border-primary ring-primary/20 ring-4")}>
+            <div
+              key={p.id}
+              className={cn(
+                "bg-card flex flex-col gap-4 rounded-xl border p-5",
+                p.highlighted && "border-primary ring-primary/20 ring-4",
+              )}
+            >
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <h2 className="font-semibold">{p.name}</h2>
-                  {p.highlighted && <span className="bg-primary text-primary-foreground rounded-full px-2 py-0.5 text-[10px] font-semibold">Popular</span>}
+                  {p.highlighted && (
+                    <span className="bg-primary text-primary-foreground rounded-full px-2 py-0.5 text-[10px] font-semibold">
+                      Popular
+                    </span>
+                  )}
                 </div>
                 <p className="text-muted-foreground mt-1 text-xs">{p.audience}</p>
               </div>
               <p className="text-3xl font-semibold tabular-nums">
                 {price === null ? "Custom" : `$${price}`}
-                {price !== null && <span className="text-muted-foreground text-sm font-normal">/mo</span>}
+                {price !== null && (
+                  <span className="text-muted-foreground text-sm font-normal">/mo</span>
+                )}
               </p>
               <p className="text-muted-foreground min-h-10 text-sm">{p.tagline}</p>
               <Button variant={p.highlighted ? "default" : "outline"} asChild>
-                <Link href={p.id === "enterprise" ? "mailto:sales@forgepilot.example" : "/signup"}>{p.id === "enterprise" ? "Talk to sales" : p.id === "free" ? "Start free" : "Start 14-day trial"}</Link>
+                <Link href={p.id === "enterprise" ? "mailto:sales@forgepilot.example" : "/signup"}>
+                  {p.id === "enterprise"
+                    ? "Talk to sales"
+                    : p.id === "free"
+                      ? "Start free"
+                      : "Start 14-day trial"}
+                </Link>
               </Button>
               <ul className="flex flex-col gap-2 text-sm">
                 {p.features.map((f) => (
@@ -114,7 +144,14 @@ export function PricingTable() {
                 </th>
                 {PLANS.map((p) => (
                   <td key={p.id} className="px-3 py-2.5 text-center">
-                    {ORDER.indexOf(p.id) >= ORDER.indexOf(f.from) ? <CheckIcon className="text-success mx-auto size-4" aria-label="Included" /> : <MinusIcon className="text-muted-foreground mx-auto size-4" aria-label="Not included" />}
+                    {ORDER.indexOf(p.id) >= ORDER.indexOf(f.from) ? (
+                      <CheckIcon className="text-success mx-auto size-4" aria-label="Included" />
+                    ) : (
+                      <MinusIcon
+                        className="text-muted-foreground mx-auto size-4"
+                        aria-label="Not included"
+                      />
+                    )}
                   </td>
                 ))}
               </tr>
@@ -123,10 +160,13 @@ export function PricingTable() {
         </table>
       </div>
 
-      <div className="mt-16 grid gap-8 md:grid-cols-2">
+      <div className="mt-16 grid grid-cols-1 gap-8 md:grid-cols-2">
         <div>
           <h2 className="text-xl font-semibold">Metered usage</h2>
-          <p className="text-muted-foreground mt-2 text-sm">Beyond your plan&apos;s included quota. Set a hard cap and alerts in Usage & billing, and work stops before spend exceeds it.</p>
+          <p className="text-muted-foreground mt-2 text-sm">
+            Beyond your plan&apos;s included quota. Set a hard cap and alerts in Usage & billing,
+            and work stops before spend exceeds it.
+          </p>
           <ul className="mt-4 divide-y rounded-lg border">
             {Object.values(METER_INFO)
               .filter((m) => m.overageUsd > 0)
@@ -139,16 +179,31 @@ export function PricingTable() {
                 </li>
               ))}
           </ul>
-          <p className="text-muted-foreground mt-2 text-xs">Agent model cost is billed by your provider on your own API key and shown as provider-reported cost. Prices are indicative for this demo.</p>
+          <p className="text-muted-foreground mt-2 text-xs">
+            Agent model cost is billed by your provider on your own API key and shown as
+            provider-reported cost. Prices are indicative for this demo.
+          </p>
         </div>
         <div>
           <h2 className="text-xl font-semibold">Questions</h2>
           <dl className="mt-4 flex flex-col gap-4 text-sm">
             {[
-              ["Can I start with just ShipSafe?", "Yes. Every module works on its own. Most teams start by verifying pull requests, then add agents and maintenance."],
-              ["Does ForgePilot merge for me?", "Never automatically. Passing checks mark a PR ready for review; merges happen in GitHub under your branch protection."],
-              ["What happens when I hit a limit?", "You see it coming: usage is projected to the end of the period. With a hard cap, new agent runs pause until you raise the budget or the period resets."],
-              ["Which agents are supported?", "Claude Code and OpenAI Codex today, through their documented interfaces. More runtimes are added only once their integration is verified."],
+              [
+                "Can I start with just ShipSafe?",
+                "Yes. Every module works on its own. Most teams start by verifying pull requests, then add agents and maintenance.",
+              ],
+              [
+                "Does ForgePilot merge for me?",
+                "Never automatically. Passing checks mark a PR ready for review; merges happen in GitHub under your branch protection.",
+              ],
+              [
+                "What happens when I hit a limit?",
+                "You see it coming: usage is projected to the end of the period. With a hard cap, new agent runs pause until you raise the budget or the period resets.",
+              ],
+              [
+                "Which agents are supported?",
+                "Claude Code and OpenAI Codex today, through their documented interfaces. More runtimes are added only once their integration is verified.",
+              ],
             ].map(([q, a]) => (
               <div key={q}>
                 <dt className="font-medium">{q}</dt>

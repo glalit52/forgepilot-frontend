@@ -20,7 +20,14 @@ export function SignupForm() {
   const router = useRouter();
 
   const submit = (method: "github" | "email") => {
-    const input = method === "github" ? { name: name || "New developer", email: email || `dev${Date.now() % 10000}@example.com`, method } : { name, email, method };
+    const input =
+      method === "github"
+        ? {
+            name: name || "New developer",
+            email: email || `dev${Date.now() % 10000}@example.com`,
+            method,
+          }
+        : { name, email, method };
     const parsed = SignUpInputSchema.safeParse(input);
     if (!parsed.success) {
       const e: Record<string, string> = {};
@@ -30,7 +37,9 @@ export function SignupForm() {
     setErrors({});
     signup.mutate(parsed.data, {
       onSuccess: (u) => {
-        toast.success(`Welcome, ${u.name.split(" ")[0]}!`, { description: "Let's set up your workspace." });
+        toast.success(`Welcome, ${u.name.split(" ")[0]}!`, {
+          description: "Let's set up your workspace.",
+        });
         router.push("/onboarding");
       },
       onError: (e) => toast.error("Could not create account", { description: e.message }),
@@ -41,9 +50,16 @@ export function SignupForm() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Create your account</h1>
-        <p className="text-muted-foreground mt-1 text-sm">Free forever for one repository. Team features free for 14 days.</p>
+        <p className="text-muted-foreground mt-1 text-sm">
+          Free forever for one repository. Team features free for 14 days.
+        </p>
       </div>
-      <Button size="lg" variant="outline" onClick={() => submit("github")} disabled={signup.isPending}>
+      <Button
+        size="lg"
+        variant="outline"
+        onClick={() => submit("github")}
+        disabled={signup.isPending}
+      >
         <GithubMark /> Sign up with GitHub
       </Button>
       <div className="flex items-center gap-3">
@@ -62,7 +78,14 @@ export function SignupForm() {
       >
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="su-name">Full name</Label>
-          <Input id="su-name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} aria-invalid={!!errors.name || undefined} aria-describedby={errors.name ? "su-name-err" : undefined} />
+          <Input
+            id="su-name"
+            autoComplete="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-invalid={!!errors.name || undefined}
+            aria-describedby={errors.name ? "su-name-err" : undefined}
+          />
           {errors.name && (
             <p id="su-name-err" role="alert" className="text-danger-foreground text-xs">
               {errors.name}
@@ -71,7 +94,15 @@ export function SignupForm() {
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="su-email">Work email</Label>
-          <Input id="su-email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} aria-invalid={!!errors.email || undefined} aria-describedby={errors.email ? "su-email-err" : undefined} />
+          <Input
+            id="su-email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            aria-invalid={!!errors.email || undefined}
+            aria-describedby={errors.email ? "su-email-err" : undefined}
+          />
           {errors.email && (
             <p id="su-email-err" role="alert" className="text-danger-foreground text-xs">
               {errors.email}

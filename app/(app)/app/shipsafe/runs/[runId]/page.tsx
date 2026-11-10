@@ -365,7 +365,7 @@ export default function RunDetailPage() {
 
       {live && <LiveProgress detail={d} />}
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="flex min-w-0 flex-col gap-6 lg:col-span-2">
           <Card className="p-4">
             <RunSummary run={run} />

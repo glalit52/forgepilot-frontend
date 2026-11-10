@@ -104,7 +104,7 @@ export default function PullRequestPage() {
 
             <MergeBanner d={d} />
 
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
               <div className="flex min-w-0 flex-col gap-4">
                 <ReleasePolicy checks={d.releasePolicy} />
 

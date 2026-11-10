@@ -57,7 +57,12 @@ export const OrganizationSchema = z.object({
 });
 export type Organization = z.infer<typeof OrganizationSchema>;
 
-export const MembershipSchema = z.object({ orgId: z.string(), userId: z.string(), role: RoleSchema, joinedAt: dt });
+export const MembershipSchema = z.object({
+  orgId: z.string(),
+  userId: z.string(),
+  role: RoleSchema,
+  joinedAt: dt,
+});
 export type Membership = z.infer<typeof MembershipSchema>;
 
 export const InvitationSchema = z.object({
@@ -224,7 +229,11 @@ export const FindingSchema = z.object({
 });
 export type Finding = z.infer<typeof FindingSchema>;
 
-export const HealthSnapshotSchema = z.object({ repositoryId: z.string(), weekStart: z.iso.date(), score: z.number() });
+export const HealthSnapshotSchema = z.object({
+  repositoryId: z.string(),
+  weekStart: z.iso.date(),
+  score: z.number(),
+});
 export type HealthSnapshot = z.infer<typeof HealthSnapshotSchema>;
 
 export const ScanSchema = z.object({
@@ -275,7 +284,11 @@ export const TaskSchema = z.object({
 });
 export type Task = z.infer<typeof TaskSchema>;
 
-export const ChangedFileSchema = z.object({ path: z.string(), additions: z.number(), deletions: z.number() });
+export const ChangedFileSchema = z.object({
+  path: z.string(),
+  additions: z.number(),
+  deletions: z.number(),
+});
 
 export const SessionSchema = z.object({
   id: z.string(),
@@ -292,7 +305,13 @@ export const SessionSchema = z.object({
   summary: z.string().nullable(),
   changedFiles: z.array(ChangedFileSchema),
   headSha: sha.nullable(),
-  waitingFor: z.object({ kind: z.enum(["approval", "clarification"]), approvalId: z.string().optional(), question: z.string().optional() }).nullable(),
+  waitingFor: z
+    .object({
+      kind: z.enum(["approval", "clarification"]),
+      approvalId: z.string().optional(),
+      question: z.string().optional(),
+    })
+    .nullable(),
   notes: z.string().nullable(),
   logSeed: z.number(),
   simulated: z.boolean(),
@@ -331,7 +350,11 @@ export const PullRequestSchema = z.object({
   number: z.number().int(),
   title: z.string(),
   url: z.url(),
-  author: z.object({ type: z.enum(["person", "agent"]), id: z.string(), sessionId: z.string().nullable() }),
+  author: z.object({
+    type: z.enum(["person", "agent"]),
+    id: z.string(),
+    sessionId: z.string().nullable(),
+  }),
   openedBy: z.string(),
   branch: z.string(),
   baseSha: sha,
@@ -376,9 +399,18 @@ export const TestRunSchema = z.object({
   selectedSuites: z.array(z.object({ suiteId: z.string(), reason: z.string() })),
   retestOf: z.string().nullable(),
   checkRun: z
-    .object({ name: z.string(), conclusion: z.enum(["success", "failure", "neutral"]).nullable(), detailsUrl: z.string() })
+    .object({
+      name: z.string(),
+      conclusion: z.enum(["success", "failure", "neutral"]).nullable(),
+      detailsUrl: z.string(),
+    })
     .nullable(),
-  totals: z.object({ passed: z.number(), failed: z.number(), flaky: z.number(), skipped: z.number() }),
+  totals: z.object({
+    passed: z.number(),
+    failed: z.number(),
+    flaky: z.number(),
+    skipped: z.number(),
+  }),
   billedBrowserMinutes: z.number(),
   infraError: z.string().optional(),
   simulatedEndsAt: z.number().optional(),
@@ -434,7 +466,11 @@ export const ApprovalSchema = z.object({
   status: ApprovalStatusSchema,
   title: z.string(),
   context: z.record(z.string(), z.unknown()),
-  requestedBy: z.object({ type: z.enum(["person", "agent"]), id: z.string(), sessionId: z.string().nullable() }),
+  requestedBy: z.object({
+    type: z.enum(["person", "agent"]),
+    id: z.string(),
+    sessionId: z.string().nullable(),
+  }),
   requestedAt: dt,
   expiresAt: dt,
   approverRole: RoleSchema,

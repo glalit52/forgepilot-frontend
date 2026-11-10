@@ -16,7 +16,9 @@ export function useSignInAndGo() {
         { userId, orgId },
         {
           onSuccess: (s) => {
-            toast.success(`Signed in as ${s.user.name}`, { description: `${s.workspace.name} · ${ROLE_LABEL[s.role]}` });
+            toast.success(`Signed in as ${s.user.name}`, {
+              description: `${s.workspace.name} · ${ROLE_LABEL[s.role]}`,
+            });
             router.push(next);
             router.refresh();
           },
