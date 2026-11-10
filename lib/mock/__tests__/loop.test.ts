@@ -239,3 +239,15 @@ describe("findings and billing", () => {
     expect(post("/tasks", newTask()).status).toBe(402);
   });
 });
+
+describe("demo freshness", () => {
+  it("shifts seed timestamps by whole days so pending work never goes stale", async () => {
+    const { shiftSeedTimes } = await import("@/lib/mock/db");
+    const later = Date.parse("2026-11-20T12:00:00Z");
+    const shifted = shiftSeedTimes(seed, later) as typeof seed;
+    const a = shifted.approvals.find((x) => x.id === "apr_001")!;
+    expect(Date.parse(a.expiresAt)).toBeGreaterThan(later);
+    expect(shifted.usageRecords.at(-1)!.date).toBe("2026-11-20");
+    expect(() => loadMockDb(shifted)).not.toThrow();
+  });
+});

@@ -122,11 +122,38 @@ export function loadMockDb(raw: unknown): MockDb {
   return parsed.data;
 }
 
+const DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const DAY_MS = 86_400_000;
+
+/**
+ * Shift every timestamp in the seed so the demo story is always "now":
+ * the seed was generated at meta.generatedAt; pending approvals, running
+ * work and SLAs would otherwise drift into the past as real time passes.
+ */
+export function shiftSeedTimes<T>(raw: T, now: number): T {
+  const generated = Date.parse((raw as { meta: { generatedAt: string } }).meta.generatedAt);
+  const days = Math.round((now - generated) / DAY_MS);
+  if (!days) return structuredClone(raw);
+  const offset = days * DAY_MS;
+  const walk = (v: unknown): unknown => {
+    if (typeof v === "string") {
+      if (DATETIME.test(v)) return toIso(Date.parse(v) + offset);
+      if (DATE.test(v)) return toIso(Date.parse(v + "T00:00:00Z") + offset).slice(0, 10);
+      return v;
+    }
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+    return v;
+  };
+  return walk(raw) as T;
+}
+
 const g = globalThis as unknown as { __fpSaasDb?: MockDb };
 
 export function getDb(): MockDb {
   if (!g.__fpSaasDb) {
-    const db = loadMockDb(seed);
+    const db = loadMockDb(shiftSeedTimes(seed, Date.now()));
     prepareSimulation(db, Date.now());
     g.__fpSaasDb = db;
   }
