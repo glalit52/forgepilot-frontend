@@ -127,19 +127,21 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 86_400_000;
 
 /**
- * Shift every timestamp in the seed so the demo story is always "now":
+ * Shift every timestamp in the seed so the demo story always happens "now":
  * the seed was generated at meta.generatedAt; pending approvals, running
  * work and SLAs would otherwise drift into the past as real time passes.
  */
 export function shiftSeedTimes<T>(raw: T, now: number): T {
   const generated = Date.parse((raw as { meta: { generatedAt: string } }).meta.generatedAt);
-  const days = Math.round((now - generated) / DAY_MS);
-  if (!days) return structuredClone(raw);
-  const offset = days * DAY_MS;
+  // Datetimes move by the exact offset (so "6 minutes ago" stays true);
+  // calendar dates (usage days, health weeks) move by whole days.
+  const offset = now - generated;
+  const dayOffset = Math.round(offset / DAY_MS) * DAY_MS;
+  if (Math.abs(offset) < 60_000) return structuredClone(raw);
   const walk = (v: unknown): unknown => {
     if (typeof v === "string") {
       if (DATETIME.test(v)) return toIso(Date.parse(v) + offset);
-      if (DATE.test(v)) return toIso(Date.parse(v + "T00:00:00Z") + offset).slice(0, 10);
+      if (DATE.test(v)) return toIso(Date.parse(v + "T00:00:00Z") + dayOffset).slice(0, 10);
       return v;
     }
     if (Array.isArray(v)) return v.map(walk);

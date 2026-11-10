@@ -241,7 +241,7 @@ describe("findings and billing", () => {
 });
 
 describe("demo freshness", () => {
-  it("shifts seed timestamps by whole days so pending work never goes stale", async () => {
+  it("shifts seed timestamps to now so pending work never goes stale", async () => {
     const { shiftSeedTimes } = await import("@/lib/mock/db");
     const later = Date.parse("2026-11-20T12:00:00Z");
     const shifted = shiftSeedTimes(seed, later) as typeof seed;
