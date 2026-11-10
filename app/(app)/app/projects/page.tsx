@@ -17,7 +17,6 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DataTable } from "@/components/shared/data-table";
 import { HealthPill, HealthScore } from "@/components/shared/health-score";
-import { MockDataBadge } from "@/components/shared/misc";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { GatedButton } from "@/components/workspace/gated-button";
@@ -122,7 +121,6 @@ export default function ProjectsPage() {
       <PageHeader
         title="Projects"
         description="Each project groups the repositories behind one product: their agents, verification and maintenance in one place."
-        meta={<MockDataBadge />}
         actions={actions}
       />
 

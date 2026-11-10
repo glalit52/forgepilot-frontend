@@ -169,7 +169,7 @@ export default function DependenciesPage() {
       id: "repo",
       header: "Repository",
       cell: (d) => (
-        <Link href={`/app/repositories/${d.repositoryId}`} className="text-sm hover:underline">
+        <Link href={`/app/repositories/${d.repositoryId}`} className="text-sm whitespace-nowrap hover:underline">
           {d.repositoryName}
         </Link>
       ),

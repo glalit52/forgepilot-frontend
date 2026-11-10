@@ -28,7 +28,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HealthBreakdown } from "@/components/shared/health-breakdown";
 import { HealthScore } from "@/components/shared/health-score";
-import { CommitSha, CopyButton, MockDataBadge } from "@/components/shared/misc";
+import { CommitSha, CopyButton } from "@/components/shared/misc";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, QueryState } from "@/components/shared/states";
 import { RunStatusBadge, ToneBadge } from "@/components/shared/status-badge";
@@ -212,7 +212,6 @@ export default function RepositoryPage() {
                     <CalendarClockIcon className="size-3.5" aria-hidden /> Scans:{" "}
                     {SCHEDULE_LABEL[r.scanSchedule]}
                   </span>
-                  <MockDataBadge />
                 </>
               }
               actions={

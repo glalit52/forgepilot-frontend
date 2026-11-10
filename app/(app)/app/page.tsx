@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ActivityTimeline } from "@/components/shared/activity-timeline";
 import { KpiCardSkeleton } from "@/components/shared/kpi-card";
-import { MockDataBadge, PlanBadge } from "@/components/shared/misc";
+import { PlanBadge } from "@/components/shared/misc";
 import { ErrorState } from "@/components/shared/states";
 import { GatedButton } from "@/components/workspace/gated-button";
 import {
@@ -91,7 +91,6 @@ export default function OverviewPage() {
             ) : (
               <Skeleton className="h-4 w-72" />
             )}
-            <MockDataBadge />
           </p>
         </div>
         <GatedButton onClick={() => openNewTask()} disabledReason={newTaskBlocked}>

@@ -66,7 +66,7 @@ export function MembersTab({ session }: { session: SessionInfo }) {
   const revoke = useRevokeInvitation();
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
+    <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr)_300px]">
       <QueryState query={query} loading={<TableSkeleton rows={6} cols={4} />}>
         {(data) => {
           const used = data.members.length + data.invitations.length;
@@ -128,9 +128,9 @@ export function MembersTab({ session }: { session: SessionInfo }) {
                       <TableHeader>
                         <TableRow className="hover:bg-transparent">
                           <TableHead>Member</TableHead>
-                          <TableHead className="w-40">Role</TableHead>
+                          <TableHead className="w-36">Role</TableHead>
                           <TableHead className="hidden md:table-cell">Last active</TableHead>
-                          <TableHead className="hidden lg:table-cell">Joined</TableHead>
+                          <TableHead className="hidden xl:table-cell">Joined</TableHead>
                           <TableHead className="w-12">
                             <span className="sr-only">Actions</span>
                           </TableHead>
@@ -203,7 +203,7 @@ export function MembersTab({ session }: { session: SessionInfo }) {
                                   </Badge>
                                 )}
                               </TableCell>
-                              <TableCell className="text-muted-foreground hidden text-sm md:table-cell">
+                              <TableCell className="text-muted-foreground hidden text-sm whitespace-nowrap md:table-cell">
                                 {m.lastActiveAt ? (
                                   <time
                                     dateTime={m.lastActiveAt}
@@ -215,7 +215,7 @@ export function MembersTab({ session }: { session: SessionInfo }) {
                                   "Never"
                                 )}
                               </TableCell>
-                              <TableCell className="text-muted-foreground hidden text-sm lg:table-cell">
+                              <TableCell className="text-muted-foreground hidden text-sm whitespace-nowrap xl:table-cell">
                                 {formatDate(m.joinedAt)}
                               </TableCell>
                               <TableCell>
@@ -340,7 +340,7 @@ function RolesPanel() {
         <CardDescription>Least privilege by default.</CardDescription>
       </CardHeader>
       <CardContent>
-        <dl className="flex flex-col gap-3">
+        <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-1">
           {ROLES.map((r) => (
             <div key={r}>
               <dt className="text-sm font-medium">{ROLE_LABEL[r]}</dt>

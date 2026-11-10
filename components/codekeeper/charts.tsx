@@ -18,9 +18,9 @@ import type { TrendPoint } from "@/lib/schemas";
 export function HealthTrendChart({ data, label }: { data: TrendPoint[]; label: string }) {
   const min = Math.max(0, Math.floor((Math.min(...data.map((d) => d.value)) - 10) / 10) * 10);
   return (
-    <div className="h-44 w-full" role="img" aria-label={label}>
+    <div className="h-56 w-full" role="img" aria-label={label}>
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+        <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
           <defs>
             <linearGradient id="ck-health" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={CHART.series[0]} stopOpacity={0.25} />
@@ -41,7 +41,7 @@ export function HealthTrendChart({ data, label }: { data: TrendPoint[]; label: s
             tick={CHART.tick}
             axisLine={false}
             tickLine={false}
-            width={44}
+            width={32}
           />
           <Tooltip
             {...CHART.tooltip}

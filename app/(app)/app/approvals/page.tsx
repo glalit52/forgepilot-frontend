@@ -7,7 +7,7 @@ import { hasFeature } from "@/lib/domain/plans";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MockDataBadge, PlanGate } from "@/components/shared/misc";
+import { PlanGate } from "@/components/shared/misc";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, QueryState } from "@/components/shared/states";
 import { ApprovalCard } from "@/components/workspace/approval-card";
@@ -38,7 +38,6 @@ export default function ApprovalsPage() {
       <PageHeader
         title="Approvals"
         description="Sensitive actions wait here for a person: protected paths, secrets, migrations, network access and budget changes. Each approval covers exactly one action."
-        meta={<MockDataBadge />}
         actions={
           <Button variant="outline" size="sm" asChild>
             <Link href="/app/settings?tab=policies">

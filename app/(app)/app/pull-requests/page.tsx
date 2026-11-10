@@ -6,7 +6,6 @@ import { usePullRequests, useRepositories, useSession } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FilterSelect } from "@/components/shared/filter-select";
-import { MockDataBadge } from "@/components/shared/misc";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, QueryState, TableSkeleton } from "@/components/shared/states";
 import { PullRequestTable } from "@/components/workspace/lists";
@@ -55,7 +54,6 @@ export default function PullRequestsPage() {
       <PageHeader
         title="Pull requests"
         description="Agent and human PRs with their ShipSafe verification. Merging always happens in GitHub, after a person reviews."
-        meta={<MockDataBadge />}
       />
       <div className="flex flex-col gap-3">
         <Tabs

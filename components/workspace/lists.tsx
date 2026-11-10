@@ -253,7 +253,7 @@ export function RunList({ runs, limit = 8 }: { runs: TestRunListItem[]; limit?: 
               className="hover:bg-muted/50 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 text-sm"
             >
               <RunStatusBadge status={r.status} />
-              <span className="min-w-0 flex-1 truncate">
+              <span className="min-w-[10rem] flex-1 truncate">
                 {r.pullRequestNumber ? (
                   <>
                     <span className="text-muted-foreground tabular-nums">

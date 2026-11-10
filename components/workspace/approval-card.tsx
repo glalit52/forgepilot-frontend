@@ -141,6 +141,8 @@ function ContextDetails({ a }: { a: ApprovalRow }) {
 }
 
 export function blockedReason(a: ApprovalRow, role: Role | undefined, userId: string | undefined) {
+  if (a.status === "pending" && Date.parse(a.expiresAt) <= Date.now())
+    return "This request expired. The requester has to ask again.";
   if (a.canDecide) return null;
   if (a.status !== "pending") return "Already decided.";
   if (a.requestedBy.type === "person" && a.requestedBy.id === userId)

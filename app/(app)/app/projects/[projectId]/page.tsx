@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HealthScore } from "@/components/shared/health-score";
-import { MockDataBadge } from "@/components/shared/misc";
 import { PageHeader } from "@/components/shared/page-header";
 import { QueryState } from "@/components/shared/states";
 import { GatedButton } from "@/components/workspace/gated-button";
@@ -69,7 +68,6 @@ export default function ProjectDetailPage() {
                   <span className="text-muted-foreground text-xs">
                     Created {formatDate(p.createdAt)}
                   </span>
-                  <MockDataBadge />
                 </>
               }
               actions={

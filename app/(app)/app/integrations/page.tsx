@@ -141,7 +141,7 @@ export default function IntegrationsPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
                     {agents.map((i) => (
                       <IntegrationCard key={i.providerId} integration={i} {...cardProps} />
                     ))}

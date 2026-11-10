@@ -7,7 +7,6 @@ import { can } from "@/lib/domain/permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FilterSelect } from "@/components/shared/filter-select";
-import { MockDataBadge } from "@/components/shared/misc";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, QueryState, TableSkeleton } from "@/components/shared/states";
 import { GatedButton } from "@/components/workspace/gated-button";
@@ -46,7 +45,6 @@ export default function RepositoriesPage() {
       <PageHeader
         title="Repositories"
         description="Every connected GitHub repository, with its health, latest verification and open maintenance work."
-        meta={<MockDataBadge />}
         actions={connect}
       />
       <QueryState

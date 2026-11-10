@@ -18,7 +18,7 @@ import { KpiCard, KpiCardSkeleton } from "@/components/shared/kpi-card";
 import { CommitSha, MockDataBadge } from "@/components/shared/misc";
 import { PageHeader, Section } from "@/components/shared/page-header";
 import { EmptyState, ErrorState } from "@/components/shared/states";
-import { SeverityBadge, ToneBadge } from "@/components/shared/status-badge";
+import { ToneBadge } from "@/components/shared/status-badge";
 import { CountBarChart, HealthTrendChart } from "@/components/codekeeper/charts";
 import { findingHref, RiskBandBadge } from "@/components/codekeeper/finding-ui";
 import { HealthExplainer } from "@/components/codekeeper/health-explainer";
@@ -352,7 +352,9 @@ function OverviewBody({ data }: { data: CodeKeeperOverview }) {
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-1">
                       <RiskBandBadge band={f.riskBand} />
-                      <SeverityBadge severity={f.severity} />
+                      <span className="text-muted-foreground text-[11px]">
+                        {f.severity[0].toUpperCase() + f.severity.slice(1)} severity
+                      </span>
                     </span>
                   </Link>
                 </li>
@@ -393,8 +395,9 @@ function OverviewBody({ data }: { data: CodeKeeperOverview }) {
                         }
                         title={`Score after scan: ${s.scoreAfter}`}
                       >
-                        {s.scoreDelta > 0 ? "+" : ""}
-                        {s.scoreDelta} → {s.scoreAfter}
+                        {s.scoreDelta === 0
+                          ? `No change · ${s.scoreAfter}`
+                          : `${s.scoreDelta > 0 ? "+" : ""}${s.scoreDelta} → ${s.scoreAfter}`}
                       </ToneBadge>
                     )}
                   </div>

@@ -162,7 +162,7 @@ export function ListEditor({
         {description && <p className="text-muted-foreground text-xs">{description}</p>}
       </div>
       {values.length > 0 ? (
-        <ul className="flex flex-wrap gap-1.5" aria-label={label}>
+        <ul className="flex flex-wrap gap-1.5" aria-label={`Current ${label.toLowerCase()}`}>
           {values.map((v) => (
             <li
               key={v}

@@ -27,7 +27,8 @@ function price(p: Plan, cycle: Cycle) {
   return cycle === "annual" ? p.priceAnnualMonthlyUsd : p.priceMonthlyUsd;
 }
 function limit(n: number | null, unit: string) {
-  return n === null ? `Unlimited ${unit}` : `${formatNumber(n)} ${unit}`;
+  if (n === null) return `Unlimited ${unit}`;
+  return `${formatNumber(n)} ${n === 1 ? unit.replace(/s$/, "") : unit}`;
 }
 
 export function PlanDialog({

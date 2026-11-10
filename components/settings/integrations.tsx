@@ -165,9 +165,11 @@ export function IntegrationCard({
           ))}
         </div>
       )}
-      <div className="mt-auto flex items-end justify-between gap-2 border-t pt-3">
-        <IntegrationStatus integration={i} />
-        <div className="flex shrink-0 gap-1.5">
+      <div className="mt-auto flex flex-wrap items-end justify-between gap-2 border-t pt-3">
+        <div className="min-w-40 flex-1">
+          <IntegrationStatus integration={i} />
+        </div>
+        <div className="ml-auto flex shrink-0 gap-1.5">
           {isBuiltIn(i) ? null : i.availability === "coming_soon" ? (
             <Button size="sm" variant="outline" disabled aria-label={`${i.name} is coming soon`}>
               Coming soon

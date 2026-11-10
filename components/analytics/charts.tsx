@@ -18,7 +18,7 @@ export function NorthStarChart({ data, label }: { data: Analytics["northStar"]; 
   return (
     <div className="h-52 w-full" role="img" aria-label={label}>
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 16, right: 8, bottom: 0, left: -20 }}>
+        <BarChart data={data} margin={{ top: 16, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="date"
@@ -33,7 +33,7 @@ export function NorthStarChart({ data, label }: { data: Analytics["northStar"]; 
             tick={CHART.tick}
             axisLine={false}
             tickLine={false}
-            width={44}
+            width={32}
           />
           <Tooltip
             {...CHART.tooltip}

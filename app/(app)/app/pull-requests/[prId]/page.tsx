@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ActorChip } from "@/components/shared/actor-chip";
 import { AiCodeFlag } from "@/components/shared/ai-code-flag";
 import { DiffViewer } from "@/components/shared/diff-viewer";
-import { CommitSha, MockDataBadge } from "@/components/shared/misc";
+import { CommitSha } from "@/components/shared/misc";
 import { FailureList, RunSummary } from "@/components/shared/run-summary";
 import { EmptyState, ErrorState, QueryState } from "@/components/shared/states";
 import { SessionStatusBadge, TaskStatusBadge } from "@/components/shared/status-badge";
@@ -93,7 +93,6 @@ export default function PullRequestPage() {
                   </span>
                   <AiCodeFlag pct={p.aiAuthoredPct} />
                   <ReviewStateBadge pr={p} />
-                  <MockDataBadge />
                 </div>
               </div>
               <Button variant="outline" asChild className="shrink-0">

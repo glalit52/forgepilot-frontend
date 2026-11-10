@@ -64,7 +64,7 @@ export function HealthHistoryChart({ data, label }: { data: HealthSnapshot[]; la
   return (
     <div className="h-48 w-full" role="img" aria-label={label}>
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+        <AreaChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
           <defs>
             <linearGradient id="ws-repo-health" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={CHART.series[0]} stopOpacity={0.25} />
