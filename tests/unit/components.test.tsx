@@ -15,8 +15,12 @@ describe("shared components", () => {
   it("ActorChip makes agent vs person explicit, including the model", () => {
     render(
       <>
-        <ActorChip actor={{ type: "agent", id: "a", name: "Claude Code", detail: "claude-sonnet" }} />
-        <ActorChip actor={{ type: "person", id: "u", name: "Dev Patel", detail: "Staff engineer" }} />
+        <ActorChip
+          actor={{ type: "agent", id: "a", name: "Claude Code", detail: "claude-sonnet" }}
+        />
+        <ActorChip
+          actor={{ type: "person", id: "u", name: "Dev Patel", detail: "Staff engineer" }}
+        />
       </>,
     );
     expect(screen.getByText(/claude-sonnet/)).toBeInTheDocument();
@@ -25,12 +29,26 @@ describe("shared components", () => {
   });
   it("HealthScore announces score and band, and handles unknown", () => {
     render(<HealthScore score={64} delta={-3} />);
-    expect(screen.getByRole("img", { name: /Health score 64 of 100, Needs attention, down 3/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /Health score 64 of 100, Needs attention, down 3/ }),
+    ).toBeInTheDocument();
     render(<HealthScore score={null} />);
     expect(screen.getByRole("img", { name: "Health score unknown" })).toBeInTheDocument();
   });
   it("HealthBreakdown shows weights and 'Unknown' instead of a fake value", () => {
-    render(<HealthBreakdown health={{ score: 74, scoreVersion: "v1.2", dependencies: 68, security: 54, buildStability: 88, tests: 81, docs: null }} />);
+    render(
+      <HealthBreakdown
+        health={{
+          score: 74,
+          scoreVersion: "v1.2",
+          dependencies: 68,
+          security: 54,
+          buildStability: 88,
+          tests: 81,
+          docs: null,
+        }}
+      />,
+    );
     expect(screen.getByText("Unknown")).toBeInTheDocument();
     expect(screen.getByText("25%")).toBeInTheDocument();
   });
@@ -39,12 +57,23 @@ describe("shared components", () => {
     expect(screen.getByTitle(/Never blamed on your change/)).toBeInTheDocument();
   });
   it("UsageMeter exposes usage to assistive tech and warns on projected overage", () => {
-    render(<UsageMeter label="Agent runtime" used={4000} limit={6000} projected={7300} unit="min" />);
-    expect(screen.getByRole("meter", { name: /Agent runtime: 4,000 of 6,000/ })).toBeInTheDocument();
+    render(
+      <UsageMeter label="Agent runtime" used={4000} limit={6000} projected={7300} unit="min" />,
+    );
+    expect(
+      screen.getByRole("meter", { name: /Agent runtime: 4,000 of 6,000/ }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/over the included amount/)).toBeInTheDocument();
   });
   it("LifecycleStepper marks the current step", () => {
-    render(<LifecycleStepper steps={[{ key: "plan", label: "Plan", state: "done", detail: null, href: null }, { key: "verify", label: "Verify", state: "current", detail: null, href: null }]} />);
+    render(
+      <LifecycleStepper
+        steps={[
+          { key: "plan", label: "Plan", state: "done", detail: null, href: null },
+          { key: "verify", label: "Verify", state: "current", detail: null, href: null },
+        ]}
+      />,
+    );
     expect(screen.getByRole("listitem", { current: "step" })).toHaveTextContent("Verify");
   });
 });

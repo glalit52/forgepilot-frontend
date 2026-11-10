@@ -24,25 +24,25 @@ pnpm dev
 
 Open <http://localhost:3000>. Click **Explore the live demo**, then pick a person:
 
-| Person | Workspace (plan) | Role | Try this |
-| --- | --- | --- | --- |
-| Maya Chen | Lumen Labs (Team) | Owner | Overview → DevPilot → **New task** → watch the agent → PR → ShipSafe → merge |
-| Dev Patel | Lumen Labs | Admin | **Approvals**: let an agent write a database migration |
-| Alex Kim | Lumen Labs | Member | ShipSafe → a failed PR → **Create fix task** |
-| Jordan Lee | Lumen Labs | Viewer | Everything is read-only |
-| Sofia Alvarez | Northwind Studio (Business) | Owner | An agency workspace with client projects |
+| Person        | Workspace (plan)            | Role   | Try this                                                                     |
+| ------------- | --------------------------- | ------ | ---------------------------------------------------------------------------- |
+| Maya Chen     | Lumen Labs (Team)           | Owner  | Overview → DevPilot → **New task** → watch the agent → PR → ShipSafe → merge |
+| Dev Patel     | Lumen Labs                  | Admin  | **Approvals**: let an agent write a database migration                       |
+| Alex Kim      | Lumen Labs                  | Member | ShipSafe → a failed PR → **Create fix task**                                 |
+| Jordan Lee    | Lumen Labs                  | Viewer | Everything is read-only                                                      |
+| Sofia Alvarez | Northwind Studio (Business) | Owner  | An agency workspace with client projects                                     |
 
 You can also **Start free** to see the whole sign-up and onboarding flow as a brand-new customer. Switch person from the user menu (bottom-left). Use **Reset demo data** in the same menu to go back to the starting story.
 
 ## Checks
 
-| Command | What it checks |
-| --- | --- |
-| `pnpm lint` | Code style and React rules |
-| `pnpm typecheck` | TypeScript types (strict) |
-| `pnpm test` | Unit tests: the closed loop, permissions, tenant isolation, budgets, plans, health score, colour contrast (WCAG AA), components, API contract |
-| `pnpm e2e` | Browser journeys: sign-up → first result, closed loop, approvals, roles, billing, every screen in light and dark |
-| `pnpm build` | Production build |
+| Command          | What it checks                                                                                                                                |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm lint`      | Code style and React rules                                                                                                                    |
+| `pnpm typecheck` | TypeScript types (strict)                                                                                                                     |
+| `pnpm test`      | Unit tests: the closed loop, permissions, tenant isolation, budgets, plans, health score, colour contrast (WCAG AA), components, API contract |
+| `pnpm e2e`       | Browser journeys: sign-up → first result, closed loop, approvals, roles, billing, every screen in light and dark                              |
+| `pnpm build`     | Production build                                                                                                                              |
 
 ## How it's organised
 

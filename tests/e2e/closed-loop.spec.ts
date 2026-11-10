@@ -2,7 +2,9 @@ import { expect, test } from "@playwright/test";
 import { signInAs, watchErrors } from "./helpers";
 
 // PRD §6.4 + §6.5: delegate → agent PR → ShipSafe fails → fix task → retest passes → human review → merge in GitHub.
-test("closed loop: failing verification becomes a fix task, retest passes, human merges", async ({ page }) => {
+test("closed loop: failing verification becomes a fix task, retest passes, human merges", async ({
+  page,
+}) => {
   test.setTimeout(150_000);
   const noErrors = watchErrors(page);
   await signInAs(page, "u_maya", "ws_lumen");
@@ -12,7 +14,11 @@ test("closed loop: failing verification becomes a fix task, retest passes, human
   await form.getByLabel("Title").fill("Persist table density preference");
   await form.getByLabel("Repository").click();
   await page.getByRole("option", { name: "lumen/web-app" }).click();
-  await form.getByLabel("Goal and context").fill("Users lose their compact/comfortable table density choice after reload. Store it per user.");
+  await form
+    .getByLabel("Goal and context")
+    .fill(
+      "Users lose their compact/comfortable table density choice after reload. Store it per user.",
+    );
   await form.getByLabel("Acceptance criterion 1").fill("Density persists after reload");
   await form.getByLabel("Acceptance criterion 2").fill("E2E test covers both densities");
   await form.getByLabel("Launch the agent now").uncheck();

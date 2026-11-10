@@ -6,11 +6,11 @@ Read this fully before any task. Product source of truth: `docs/PRD.md` (Final P
 
 **A self-serve SaaS product.** It's the engineering operations layer for teams building software with AI coding agents. It is not an agency or a managed service. One workspace, three modules sharing repository intelligence:
 
-| Module | Purpose | Key screens |
-| --- | --- | --- |
-| **DevPilot** | Coordinate AI coding agents (Claude Code, Codex): tasks, isolated sessions, logs, PRs | Command centre, tasks, sessions, workspaces |
-| **ShipSafe** | Verify every PR (agent or human) with commit-pinned tests and evidence | Testing dashboard, suites, runs, bugs, PR verification |
-| **CodeKeeper** | Keep repositories healthy: dependencies, advisories, maintenance PRs | Health, dependencies, findings, maintenance |
+| Module         | Purpose                                                                               | Key screens                                            |
+| -------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| **DevPilot**   | Coordinate AI coding agents (Claude Code, Codex): tasks, isolated sessions, logs, PRs | Command centre, tasks, sessions, workspaces            |
+| **ShipSafe**   | Verify every PR (agent or human) with commit-pinned tests and evidence                | Testing dashboard, suites, runs, bugs, PR verification |
+| **CodeKeeper** | Keep repositories healthy: dependencies, advisories, maintenance PRs                  | Health, dependencies, findings, maintenance            |
 
 Customers: AI-native developers, engineering leads/CTOs, software agencies, OSS maintainers (PRD §4). Pricing: subscription plus metered usage. Plans are Free / Developer $29 / Pro $79 / Team $199 / Business $499 / Enterprise (`lib/domain/plans.ts`, PRD §18). Positioning: integrate, don't replace. It is **not** an IDE, not a model, and never auto-merges.
 

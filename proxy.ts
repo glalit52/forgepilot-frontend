@@ -14,10 +14,16 @@ export function proxy(request: NextRequest) {
     url.searchParams.set("next", pathname + search);
     return NextResponse.redirect(url);
   }
-  if (session && (pathname === "/login" || pathname === "/signup") && !request.nextUrl.searchParams.has("switch")) {
+  if (
+    session &&
+    (pathname === "/login" || pathname === "/signup") &&
+    !request.nextUrl.searchParams.has("switch")
+  ) {
     return NextResponse.redirect(new URL("/app", request.url));
   }
   return NextResponse.next();
 }
 
-export const config = { matcher: ["/app/:path*", "/onboarding/:path*", "/onboarding", "/login", "/signup"] };
+export const config = {
+  matcher: ["/app/:path*", "/onboarding/:path*", "/onboarding", "/login", "/signup"],
+};

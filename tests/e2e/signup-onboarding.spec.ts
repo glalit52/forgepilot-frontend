@@ -2,11 +2,15 @@ import { expect, test } from "@playwright/test";
 import { watchErrors } from "./helpers";
 
 // PRD Journey A: first-time developer onboarding → first useful result.
-test("a new developer signs up, connects a repo and gets a first verified result", async ({ page }) => {
+test("a new developer signs up, connects a repo and gets a first verified result", async ({
+  page,
+}) => {
   const noErrors = watchErrors(page);
   await page.request.post("/api/mock/demo/reset", { data: {} });
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("ForgePilot makes it shippable");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(
+    "ForgePilot makes it shippable",
+  );
   await page.getByRole("link", { name: "Start free" }).first().click();
 
   await page.getByLabel("Full name").fill("Robin Ortiz");
@@ -29,7 +33,9 @@ test("a new developer signs up, connects a repo and gets a first verified result
   await page.getByRole("button", { name: /Connect 1 repository/ }).click();
 
   // 4. Discovery
-  await expect(page.getByRole("button", { name: "Confirm configuration" })).toBeEnabled({ timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "Confirm configuration" })).toBeEnabled({
+    timeout: 20_000,
+  });
   await expect(page.getByLabel("Test commands (comma-separated)")).toHaveValue(/test/);
   await page.getByRole("button", { name: "Confirm configuration" }).click();
 

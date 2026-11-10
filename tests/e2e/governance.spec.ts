@@ -1,10 +1,15 @@
 import { expect, test } from "@playwright/test";
 import { signInAs } from "./helpers";
 
-test("an admin approves an agent's protected-path request and the session resumes", async ({ page }) => {
+test("an admin approves an agent's protected-path request and the session resumes", async ({
+  page,
+}) => {
   await signInAs(page, "u_dev", "ws_lumen");
   await page.goto("/app/approvals");
-  const card = page.getByRole("article").filter({ hasText: "migrations/0042_payouts_status_idx.py" }).first();
+  const card = page
+    .getByRole("article")
+    .filter({ hasText: "migrations/0042_payouts_status_idx.py" })
+    .first();
   await card.getByRole("button", { name: "Approve" }).click();
   const confirm = page.getByRole("button", { name: "Confirm approval" });
   if (await confirm.isVisible().catch(() => false)) await confirm.click();
@@ -23,7 +28,9 @@ test("members can't decide approvals; viewers can't launch agents", async ({ pag
   await expect(page.getByRole("button", { name: "Launch agent" })).toBeDisabled();
 });
 
-test("signed-out visitors are sent to sign in; workspaces switch from the switcher", async ({ page }) => {
+test("signed-out visitors are sent to sign in; workspaces switch from the switcher", async ({
+  page,
+}) => {
   await page.goto("/app");
   await expect(page).toHaveURL(/\/login/);
   await signInAs(page, "u_maya", "ws_lumen");
@@ -50,6 +57,8 @@ test("approvals and the overview work on a 390px phone", async ({ page }) => {
   for (const path of ["/app", "/app/approvals"]) {
     await page.goto(path);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)).toBe(false);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1),
+    ).toBe(false);
   }
 });

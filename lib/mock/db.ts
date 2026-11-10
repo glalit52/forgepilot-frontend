@@ -145,7 +145,8 @@ export function shiftSeedTimes<T>(raw: T, now: number): T {
       return v;
     }
     if (Array.isArray(v)) return v.map(walk);
-    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+    if (v && typeof v === "object")
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
     return v;
   };
   return walk(raw) as T;
