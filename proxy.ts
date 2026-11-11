@@ -1,34 +1,29 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { canAccessPath, homeForRole, SESSION_COOKIE } from "@/lib/domain/roles";
-import { RoleSchema } from "@/lib/schemas/enums";
+import { SESSION_COOKIE } from "@/lib/domain/permissions";
 
 /**
- * Optimistic route guard for the mock session. The fp_role cookie is a UI
- * hint set alongside fp_session; the mock API still checks the real user on
- * every call. Unauthorized routes redirect to the role's home.
+ * Optimistic route guard for the mock session. The mock API still checks the
+ * user and workspace on every call; this only avoids rendering the app shell
+ * for signed-out visitors.
  */
 export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
   const session = request.cookies.get(SESSION_COOKIE)?.value;
-  const role = RoleSchema.safeParse(request.cookies.get("fp_role")?.value);
-
-  if (!session || !role.success) {
-    if (pathname === "/login") return NextResponse.next();
+  if (!session && (pathname.startsWith("/app") || pathname.startsWith("/onboarding"))) {
     const url = new URL("/login", request.url);
-    if (pathname !== "/") url.searchParams.set("next", pathname);
+    url.searchParams.set("next", pathname + search);
     return NextResponse.redirect(url);
   }
-  if (pathname === "/" || pathname === "/login") {
-    return NextResponse.redirect(new URL(homeForRole(role.data), request.url));
-  }
-  if (!canAccessPath(role.data, pathname)) {
-    const url = new URL(homeForRole(role.data), request.url);
-    url.searchParams.set("denied", pathname);
-    return NextResponse.redirect(url);
+  if (
+    session &&
+    (pathname === "/login" || pathname === "/signup") &&
+    !request.nextUrl.searchParams.has("switch")
+  ) {
+    return NextResponse.redirect(new URL("/app", request.url));
   }
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/", "/login", "/portal/:path*", "/console/:path*"],
+  matcher: ["/app/:path*", "/onboarding/:path*", "/onboarding", "/login", "/signup"],
 };

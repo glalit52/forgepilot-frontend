@@ -1,61 +1,112 @@
 import { z } from "zod";
 
-export const RoleSchema = z.enum([
-  "client_admin",
-  "client_approver",
-  "client_viewer",
-  "fp_engineer",
-  "fp_manager",
-]);
+export const PlanIdSchema = z.enum(["free", "developer", "pro", "team", "business", "enterprise"]);
+export type PlanId = z.infer<typeof PlanIdSchema>;
+
+export const RoleSchema = z.enum(["owner", "admin", "member", "viewer"]);
 export type Role = z.infer<typeof RoleSchema>;
 
-export const TierSchema = z.enum(["maintain", "maintain_assure", "full_run"]);
-export type Tier = z.infer<typeof TierSchema>;
+export const WorkspaceKindSchema = z.enum(["personal", "team", "agency"]);
+export type WorkspaceKind = z.infer<typeof WorkspaceKindSchema>;
 
-export const CriticalitySchema = z.enum(["critical", "high", "medium", "low"]);
-export type Criticality = z.infer<typeof CriticalitySchema>;
+export const ModuleSchema = z.enum(["devpilot", "shipsafe", "codekeeper"]);
+export type Module = z.infer<typeof ModuleSchema>;
 
-/** Task lifecycle, in order. `failed` and `rejected` are terminal side-exits. */
-export const TASK_STATES = [
-  "created",
-  "planned",
-  "plan_approved",
+/** DevPilot task lifecycle. Review-ready only when completion conditions are met (PRD §6.4). */
+export const TASK_STATUSES = [
+  "draft",
+  "queued",
   "running",
+  "waiting_input",
   "verifying",
-  "retrying",
-  "escalated",
-  "awaiting_review",
-  "signed_off",
-  "pr_open",
-  "client_approved",
-  "merged",
-  "closed",
+  "review_ready",
+  "completed",
   "failed",
-  "rejected",
+  "cancelled",
 ] as const;
-export const TaskStateSchema = z.enum(TASK_STATES);
-export type TaskState = z.infer<typeof TaskStateSchema>;
+export const TaskStatusSchema = z.enum(TASK_STATUSES);
+export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
-export const TaskTypeSchema = z.enum([
-  "dependency_upgrade",
-  "cve_patch",
-  "bug_fix",
-  "enhancement",
-  "test_coverage",
+export const TaskSourceSchema = z.enum([
+  "manual",
+  "github_issue",
+  "linear",
+  "jira",
+  "shipsafe_failure",
+  "codekeeper_finding",
 ]);
-export type TaskType = z.infer<typeof TaskTypeSchema>;
+export type TaskSource = z.infer<typeof TaskSourceSchema>;
 
-export const PrioritySchema = z.enum(["p0", "p1", "p2", "p3"]);
+export const PrioritySchema = z.enum(["urgent", "high", "medium", "low"]);
 export type Priority = z.infer<typeof PrioritySchema>;
 
-export const AgentKindSchema = z.enum(["claude_code", "codex", "devin"]);
-export type AgentKind = z.infer<typeof AgentKindSchema>;
+/** Agent session lifecycle (DP-004). */
+export const SessionStatusSchema = z.enum([
+  "queued",
+  "running",
+  "waiting",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 
-export const GitProviderSchema = z.enum(["github", "gitlab", "bitbucket", "azure_devops"]);
-export type GitProvider = z.infer<typeof GitProviderSchema>;
+export const ProviderSchema = z.enum(["claude_code", "openai_codex", "devin", "cursor"]);
+export type Provider = z.infer<typeof ProviderSchema>;
 
-export const LanguageSchema = z.enum(["java", "dotnet", "typescript", "python", "go", "kotlin"]);
-export type Language = z.infer<typeof LanguageSchema>;
+export const TestRunStatusSchema = z.enum(["queued", "running", "passed", "failed", "errored"]);
+export type TestRunStatus = z.infer<typeof TestRunStatusSchema>;
+
+export const TestOutcomeSchema = z.enum(["passed", "failed", "flaky", "skipped"]);
+export type TestOutcome = z.infer<typeof TestOutcomeSchema>;
+
+/** SS-009: failures are classified so infra noise is never reported as a product defect. */
+export const FailureClassSchema = z.enum([
+  "product_defect",
+  "test_defect",
+  "environment",
+  "flaky",
+  "infrastructure",
+]);
+export type FailureClass = z.infer<typeof FailureClassSchema>;
+
+export const SeveritySchema = z.enum(["critical", "high", "medium", "low"]);
+export type Severity = z.infer<typeof SeveritySchema>;
+
+export const FindingCategorySchema = z.enum([
+  "vulnerability",
+  "outdated",
+  "build",
+  "tests",
+  "docs",
+]);
+export type FindingCategory = z.infer<typeof FindingCategorySchema>;
+
+export const FindingStatusSchema = z.enum(["open", "task_created", "suppressed", "resolved"]);
+export type FindingStatus = z.infer<typeof FindingStatusSchema>;
+
+export const ApprovalActionSchema = z.enum([
+  "modify_protected_path",
+  "access_secret",
+  "run_migration",
+  "network_egress",
+  "budget_increase",
+  "create_pull_request",
+  "deploy_production",
+]);
+export type ApprovalAction = z.infer<typeof ApprovalActionSchema>;
+
+export const ApprovalStatusSchema = z.enum(["pending", "approved", "rejected", "expired"]);
+export type ApprovalStatus = z.infer<typeof ApprovalStatusSchema>;
+
+export const MeterSchema = z.enum([
+  "agent_minutes",
+  "browser_minutes",
+  "test_runs",
+  "scan_runs",
+  "storage_gb",
+]);
+export type Meter = z.infer<typeof MeterSchema>;
 
 export const HealthDimensionSchema = z.enum([
   "dependencies",
@@ -65,26 +116,3 @@ export const HealthDimensionSchema = z.enum([
   "docs",
 ]);
 export type HealthDimension = z.infer<typeof HealthDimensionSchema>;
-
-export const SeveritySchema = z.enum(["critical", "high", "medium", "low"]);
-export type Severity = z.infer<typeof SeveritySchema>;
-
-export const EvidenceEventSchema = z.enum([
-  "task_created",
-  "plan_updated",
-  "plan_approved",
-  "agent_run_started",
-  "agent_run_stopped",
-  "retry_requested",
-  "manual_takeover",
-  "verification_passed",
-  "verification_failed",
-  "escalated",
-  "engineer_signed_off",
-  "pr_opened",
-  "client_approved",
-  "client_requested_changes",
-  "merged",
-  "closed",
-]);
-export type EvidenceEvent = z.infer<typeof EvidenceEventSchema>;

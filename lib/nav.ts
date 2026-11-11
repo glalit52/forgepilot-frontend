@@ -1,74 +1,119 @@
 import {
-  ActivityIcon,
-  AppWindowIcon,
   BarChart3Icon,
-  BotIcon,
-  Building2Icon,
+  ImagesIcon,
+  BugIcon,
   CheckSquareIcon,
-  FileCheck2Icon,
-  FolderGit2Icon,
-  GaugeIcon,
-  InboxIcon,
+  CreditCardIcon,
+  FlaskConicalIcon,
+  FolderKanbanIcon,
+  GitPullRequestIcon,
+  HeartPulseIcon,
   LayoutDashboardIcon,
-  ListTodoIcon,
+  ListChecksIcon,
+  PackageIcon,
   PlugIcon,
+  RadarIcon,
   SettingsIcon,
-  SirenIcon,
+  ShieldAlertIcon,
+  TerminalSquareIcon,
+  BoxesIcon,
+  BotIcon,
   WrenchIcon,
   type LucideIcon,
 } from "lucide-react";
-import type { Role } from "@/lib/schemas";
+import type { Module } from "@/lib/schemas";
 
 export interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
-  /** Exact match for "home" items. */
   exact?: boolean;
-  badge?: "approvals" | "queue";
-  roles?: Role[];
-  disabled?: { reason: string };
+  badge?: "approvals" | "review" | "visual";
+}
+export interface NavGroup {
+  label?: string;
+  module?: Module;
+  items: NavItem[];
 }
 
-export const PORTAL_NAV: NavItem[] = [
-  { href: "/portal", label: "Overview", icon: LayoutDashboardIcon, exact: true },
-  { href: "/portal/applications", label: "Applications", icon: AppWindowIcon },
-  { href: "/portal/work", label: "Work", icon: WrenchIcon },
-  { href: "/portal/approvals", label: "Approvals", icon: CheckSquareIcon, badge: "approvals" },
-  { href: "/portal/evidence", label: "Evidence", icon: FileCheck2Icon },
-  { href: "/portal/reports", label: "Reports", icon: BarChart3Icon },
-  { href: "/portal/settings", label: "Settings", icon: SettingsIcon },
+/** PRD §11.1 primary navigation. */
+export const NAV: NavGroup[] = [
+  {
+    items: [
+      { href: "/app", label: "Overview", icon: LayoutDashboardIcon, exact: true },
+      { href: "/app/projects", label: "Projects", icon: FolderKanbanIcon },
+    ],
+  },
+  {
+    label: "DevPilot",
+    module: "devpilot",
+    items: [
+      { href: "/app/devpilot", label: "Command centre", icon: BotIcon, exact: true },
+      { href: "/app/devpilot/tasks", label: "Tasks", icon: ListChecksIcon },
+      { href: "/app/devpilot/sessions", label: "Sessions", icon: TerminalSquareIcon },
+      { href: "/app/devpilot/workspaces", label: "Workspaces", icon: BoxesIcon },
+    ],
+  },
+  {
+    label: "ShipSafe",
+    module: "shipsafe",
+    items: [
+      { href: "/app/shipsafe", label: "Testing dashboard", icon: RadarIcon, exact: true },
+      { href: "/app/shipsafe/suites", label: "Test suites", icon: FlaskConicalIcon },
+      { href: "/app/shipsafe/runs", label: "Verification runs", icon: ListChecksIcon },
+      { href: "/app/shipsafe/visual", label: "Visual review", icon: ImagesIcon, badge: "visual" },
+      { href: "/app/shipsafe/bugs", label: "Bugs", icon: BugIcon },
+    ],
+  },
+  {
+    label: "CodeKeeper",
+    module: "codekeeper",
+    items: [
+      { href: "/app/codekeeper", label: "Repository health", icon: HeartPulseIcon, exact: true },
+      { href: "/app/codekeeper/dependencies", label: "Dependencies", icon: PackageIcon },
+      { href: "/app/codekeeper/findings", label: "Security findings", icon: ShieldAlertIcon },
+      { href: "/app/codekeeper/maintenance", label: "Maintenance tasks", icon: WrenchIcon },
+    ],
+  },
+  {
+    label: "Workspace",
+    items: [
+      {
+        href: "/app/pull-requests",
+        label: "Pull requests",
+        icon: GitPullRequestIcon,
+        badge: "review",
+      },
+      { href: "/app/approvals", label: "Approvals", icon: CheckSquareIcon, badge: "approvals" },
+      { href: "/app/analytics", label: "Analytics", icon: BarChart3Icon },
+      { href: "/app/integrations", label: "Integrations", icon: PlugIcon },
+      { href: "/app/billing", label: "Usage & billing", icon: CreditCardIcon },
+      { href: "/app/settings", label: "Settings", icon: SettingsIcon },
+    ],
+  },
 ];
 
-export const CONSOLE_NAV: NavItem[] = [
-  { href: "/console", label: "My queue", icon: InboxIcon, exact: true, badge: "queue" },
-  { href: "/console/tasks", label: "Tasks", icon: ListTodoIcon },
-  { href: "/console/clients", label: "Clients", icon: Building2Icon },
-  { href: "/console/repositories", label: "Repositories", icon: FolderGit2Icon },
-  { href: "/console/ops", label: "Ops dashboard", icon: GaugeIcon, roles: ["fp_manager"] },
-  { href: "/console/integrations", label: "Agents & integrations", icon: PlugIcon },
-  { href: "#agents", label: "Agents", icon: BotIcon, disabled: { reason: "Phase 2 · coming soon" } },
-  { href: "#incidents", label: "Incidents", icon: SirenIcon, disabled: { reason: "Phase 3 · coming soon" } },
-];
-
-/** Static labels for breadcrumb segments. Dynamic ids are labelled by pages. */
 export const SEGMENT_LABEL: Record<string, string> = {
-  portal: "Portal",
-  console: "Console",
-  applications: "Applications",
-  work: "Work",
-  approvals: "Approvals",
-  evidence: "Evidence",
-  reports: "Reports",
-  settings: "Settings",
-  onboarding: "Onboarding",
-  tasks: "Tasks",
-  clients: "Clients",
+  app: "Overview",
+  projects: "Projects",
   repositories: "Repositories",
-  ops: "Ops dashboard",
-  integrations: "Agents & integrations",
-  dev: "Developer",
-  components: "Component gallery",
+  devpilot: "DevPilot",
+  tasks: "Tasks",
+  sessions: "Sessions",
+  workspaces: "Workspaces",
+  shipsafe: "ShipSafe",
+  suites: "Test suites",
+  runs: "Verification runs",
+  visual: "Visual review",
+  bugs: "Bugs",
+  codekeeper: "CodeKeeper",
+  dependencies: "Dependencies",
+  findings: "Security findings",
+  maintenance: "Maintenance tasks",
+  "pull-requests": "Pull requests",
+  approvals: "Approvals",
+  analytics: "Analytics",
+  integrations: "Integrations",
+  billing: "Usage & billing",
+  settings: "Settings",
 };
-
-export { ActivityIcon };

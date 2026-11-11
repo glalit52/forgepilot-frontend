@@ -27,7 +27,12 @@ export function buildUrl(path: string, query?: Query) {
   return `${API_BASE}${path}${s ? `?${s}` : ""}`;
 }
 
-async function request<T>(schema: z.ZodType<T>, method: string, path: string, opts: { query?: Query; body?: unknown } = {}) {
+async function request<T>(
+  schema: z.ZodType<T>,
+  method: string,
+  path: string,
+  opts: { query?: Query; body?: unknown } = {},
+) {
   const res = await fetch(buildUrl(path, opts.query), {
     method,
     headers: opts.body !== undefined ? { "Content-Type": "application/json" } : undefined,
@@ -49,7 +54,8 @@ async function request<T>(schema: z.ZodType<T>, method: string, path: string, op
 }
 
 export const api = {
-  get: <T>(schema: z.ZodType<T>, path: string, query?: Query) => request(schema, "GET", path, { query }),
+  get: <T>(schema: z.ZodType<T>, path: string, query?: Query) =>
+    request(schema, "GET", path, { query }),
   post: <T>(schema: z.ZodType<T>, path: string, body?: unknown, query?: Query) =>
     request(schema, "POST", path, { body: body ?? {}, query }),
 };

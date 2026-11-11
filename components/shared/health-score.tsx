@@ -1,13 +1,9 @@
 import { ArrowDownRightIcon, ArrowRightIcon, ArrowUpRightIcon } from "lucide-react";
-import { healthBand } from "@/lib/domain/status";
+import { healthBand } from "@/lib/domain/health";
 import { cn } from "@/lib/utils";
 
-const RING: Record<string, string> = {
-  healthy: "stroke-success",
-  at_risk: "stroke-warning",
-  poor: "stroke-danger",
-};
-const BAND_LABEL = { healthy: "Healthy", at_risk: "At risk", poor: "Poor" };
+const RING = { healthy: "stroke-success", at_risk: "stroke-warning", poor: "stroke-danger" };
+const BAND_LABEL = { healthy: "Healthy", at_risk: "Needs attention", poor: "Poor" };
 
 /** 0–100 ring with colour band (≥80 green, 60–79 amber, <60 red) and trend arrow. */
 export function HealthScore({
@@ -17,18 +13,41 @@ export function HealthScore({
   showLabel = false,
   className,
 }: {
-  score: number;
+  score: number | null;
   delta?: number;
   size?: number;
   showLabel?: boolean;
   className?: string;
 }) {
+  if (score === null)
+    return (
+      <span
+        className={cn("text-muted-foreground inline-flex items-center gap-2 text-sm", className)}
+        role="img"
+        aria-label="Health score unknown"
+      >
+        <span
+          className="bg-muted flex items-center justify-center rounded-full text-xs"
+          style={{ width: size, height: size }}
+        >
+          —
+        </span>
+        {showLabel && "Unknown"}
+      </span>
+    );
   const band = healthBand(score);
   const stroke = Math.max(4, size / 12);
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const dash = (Math.max(0, Math.min(100, score)) / 100) * c;
-  const Trend = delta === undefined ? null : delta > 0 ? ArrowUpRightIcon : delta < 0 ? ArrowDownRightIcon : ArrowRightIcon;
+  const Trend =
+    delta === undefined
+      ? null
+      : delta > 0
+        ? ArrowUpRightIcon
+        : delta < 0
+          ? ArrowDownRightIcon
+          : ArrowRightIcon;
   return (
     <div
       className={cn("inline-flex items-center gap-2", className)}
@@ -37,7 +56,14 @@ export function HealthScore({
     >
       <span className="relative inline-flex" style={{ width: size, height: size }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-muted" />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            strokeWidth={stroke}
+            className="stroke-muted"
+          />
           <circle
             cx={size / 2}
             cy={size / 2}
@@ -63,7 +89,11 @@ export function HealthScore({
             <span
               className={cn(
                 "inline-flex items-center gap-0.5 text-xs tabular-nums",
-                delta! > 0 ? "text-success-foreground" : delta! < 0 ? "text-danger-foreground" : "text-muted-foreground",
+                delta! > 0
+                  ? "text-success-foreground"
+                  : delta! < 0
+                    ? "text-danger-foreground"
+                    : "text-muted-foreground",
               )}
             >
               <Trend className="size-3" aria-hidden />
@@ -77,8 +107,8 @@ export function HealthScore({
   );
 }
 
-/** Compact inline score pill for tables. */
-export function HealthPill({ score }: { score: number }) {
+export function HealthPill({ score }: { score: number | null }) {
+  if (score === null) return <span className="text-muted-foreground text-xs">Unknown</span>;
   const band = healthBand(score);
   return (
     <span

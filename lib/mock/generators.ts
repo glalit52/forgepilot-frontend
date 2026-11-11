@@ -1,83 +1,138 @@
-/** Deterministic generators for things the seed data doesn't store: live logs, diffs, repo lists. */
-import type { AgentRun, DiffFile, DiffLine, GitRepoCandidate, LogLine, Repository, Task } from "@/lib/schemas";
-import { toIso } from "./evidence";
+/** Deterministic generators: live agent logs (with secret redaction), diffs, worker logs, GitHub repo lists. */
+import type {
+  DiffFile,
+  DiffLine,
+  GithubRepoCandidate,
+  LogLine,
+  MockDb,
+  Repository,
+  Session,
+  Task,
+  TestRun,
+} from "@/lib/schemas";
+import { toIso } from "./db";
 
-export const LOG_INTERVAL_MS = 1400;
+export const LOG_INTERVAL_MS = 1200;
 
-function hashStr(s: string) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
+type Raw = [LogLine["level"], string];
+
+/** DP-005: secrets are redacted before display. */
+const SECRET = /(sk-[A-Za-z0-9]{6,}|ghp_[A-Za-z0-9]{6,}|AKIA[0-9A-Z]{8,})/g;
+function redact(text: string) {
+  let n = 0;
+  const out = text.replace(SECRET, () => {
+    n++;
+    return "[REDACTED]";
+  });
+  return [out, n] as const;
 }
 
-const FILES_BY_LANG: Record<string, string[]> = {
-  java: ["src/main/java/com/acme/service/Handler.java", "src/main/java/com/acme/config/AppConfig.java", "src/test/java/com/acme/service/HandlerTest.java", "pom.xml"],
-  dotnet: ["src/Api/Controllers/PolicyController.cs", "src/Api/Program.cs", "tests/Api.Tests/PolicyControllerTests.cs", "src/Api/Api.csproj"],
-  typescript: ["src/server/routes/confirm.ts", "src/lib/http/retry.ts", "src/lib/http/retry.test.ts", "package.json"],
-  python: ["app/rules/engine.py", "app/api/routes.py", "tests/test_engine.py", "pyproject.toml"],
-  go: ["internal/handler/handler.go", "cmd/server/main.go", "internal/handler/handler_test.go", "go.mod"],
-  kotlin: ["src/main/kotlin/App.kt", "src/test/kotlin/AppTest.kt", "build.gradle.kts", "README.md"],
-};
-
-function filesFor(repo: Repository) {
-  return FILES_BY_LANG[repo.language] ?? FILES_BY_LANG.typescript;
+export function generateLog(db: MockDb, session: Session, now: number) {
+  const task = db.tasks.find((t) => t.id === session.taskId)!;
+  const repo = db.repositories.find((r) => r.id === task.repositoryId)!;
+  const agent = db.agents.find((a) => a.id === session.agentId)!;
+  const py = repo.ecosystems[0] === "pypi";
+  const f1 =
+    session.changedFiles[0]?.path ?? (py ? "app/api/handlers.py" : "src/components/Feature.tsx");
+  const f2 =
+    session.changedFiles[1]?.path ??
+    (py ? "tests/api/test_handlers.py" : "src/components/Feature.test.tsx");
+  const cmd = repo.testCommands[0] ?? "npm test";
+  const intro: Raw[] = [
+    [
+      "info",
+      `Workspace wk_${session.id.replace(/^sess_/, "")} ready · container 2 vCPU / 4 GB · network: allowlist (${db.policies.find((p) => p.orgId === task.orgId)?.networkAllowlist.length ?? 0} hosts)`,
+    ],
+    ["info", `Ephemeral GitHub token scoped to ${repo.fullName} (expires in 60 min)`],
+    ["info", `Checked out ${task.baseSha.slice(0, 7)} on branch ${task.branch}`],
+    [
+      "info",
+      `${agent.name} (${agent.model}) started · attempt #${session.attempt} · budget $${task.budgetUsd.toFixed(2)} · timeout ${task.timeoutMin}m`,
+    ],
+    [
+      "info",
+      `Loaded repository context: ${repo.fileCount} files indexed, ${repo.frameworks.join(", ")}, test command \`${cmd}\``,
+    ],
+    ...(session.notes ? ([["warn", `Notes for this attempt: ${session.notes}`]] as Raw[]) : []),
+    [
+      "tool",
+      `env: reading .env.example (values from vault: ANTHROPIC_KEY=sk-demo0000secret redacted)`,
+    ],
+  ];
+  const loop: Raw[] = [
+    ["tool", `read ${f1}`],
+    [
+      "tool",
+      `search "${task.title.split(" ").slice(-2).join(" ").toLowerCase()}" in ${py ? "app/" : "src/"}`,
+    ],
+    ["tool", `edit ${f1} (+${12 + (session.logSeed % 20)} −${2 + (session.logSeed % 6)})`],
+    [
+      "tool",
+      `edit ${f2} (+${30 + (session.logSeed % 25)} −0) · tests for: "${task.acceptanceCriteria[0] ?? "the goal"}"`,
+    ],
+    ["tool", `run ${cmd}`],
+    ["success", `${py ? "pytest" : "tests"}: ${40 + (session.logSeed % 60)} passed`],
+    ["info", `Checking acceptance criteria (${task.acceptanceCriteria.length})`],
+  ];
+  const start = Date.parse(session.startedAt);
+  const ended = session.endedAt ? Date.parse(session.endedAt) : null;
+  const all: Raw[] = [...intro];
+  const pending = db.approvals.find((a) => a.context.sessionId === session.id);
+  if (ended) {
+    all.push(...loop);
+    if (pending)
+      all.push([
+        "approval",
+        `Paused: approval ${pending.status} for ${String(pending.context.path ?? pending.action)}`,
+      ]);
+    if (session.status === "completed") {
+      all.push([
+        "info",
+        "Self-review complete: changes stay inside the assigned repository and branch",
+      ]);
+      all.push([
+        "success",
+        `Committed ${session.headSha?.slice(0, 7)} · ${session.changedFiles.length} files changed · handing off to ShipSafe`,
+      ]);
+    } else if (session.status === "failed")
+      all.push(["error", session.summary ?? "Session failed"]);
+    else
+      all.push([
+        "warn",
+        "Session cancelled by user; worker terminated and workspace scheduled for cleanup",
+      ]);
+  } else {
+    const n = Math.floor((now - start) / LOG_INTERVAL_MS) + 1;
+    for (let i = intro.length; i < n; i++) all.push(loop[(i - intro.length) % loop.length]);
+    if (session.status === "waiting" && pending)
+      all.push(["approval", `Paused: waiting for approval — ${pending.title}`]);
+  }
+  let redactions = 0;
+  const lines = all.slice(-400).map(([level, text], i) => {
+    const [clean, n] = redact(text);
+    redactions += n;
+    return { seq: i, at: toIso(start + i * LOG_INTERVAL_MS), level, text: clean };
+  });
+  const total = (session.simulatedEndsAt ?? ended ?? now) - start;
+  const progressPct = ended
+    ? 100
+    : session.status === "waiting"
+      ? 50
+      : Math.min(97, Math.round(((now - start) / Math.max(1, total)) * 100));
+  return { sessionId: session.id, status: session.status, lines, progressPct, redactions };
 }
 
-/**
- * Live log for a run. Lines appear one every LOG_INTERVAL_MS since the run started;
- * when the run is over, the full log (with a closing line) is returned.
- */
-export function generateLog(task: Task, repo: Repository, run: AgentRun, now: number): LogLine[] {
-  const files = filesFor(repo);
-  const start = Date.parse(run.startedAt);
-  const human = task.manualTakeoverBy ? " (engineer driving)" : "";
-  const intro: [LogLine["level"], string][] = [
-    ["info", `Sandbox ready · ${repo.language} toolchain · branch fp/${task.id}${human}`],
-    ["info", `Agent ${run.agent} (${run.model}) attempt #${run.attempt} started`],
-    ["tool", `git clone ${repo.url} --branch ${repo.defaultBranch}`],
-    ["info", `Loaded client context graph: 412 symbols, 37 prior changes`],
-    ["info", `Plan: ${task.plan.steps.join(" → ")}`],
-    ...(run.notes ? ([["warn", `Engineer notes for this attempt: ${run.notes}`]] as [LogLine["level"], string][]) : []),
+function hunk(start: number, lines: [DiffLine["kind"], string][]): DiffLine[] {
+  let o = start;
+  let n = start;
+  const out: DiffLine[] = [
+    {
+      kind: "hunk",
+      oldNo: null,
+      newNo: null,
+      text: `@@ -${start},${lines.length} +${start},${lines.length} @@`,
+    },
   ];
-  const loop: [LogLine["level"], string][] = [
-    ["tool", `read ${files[0]}`],
-    ["tool", `grep -rn "${task.type === "cve_patch" ? "openssl" : "timeout"}" src/`],
-    ["tool", `edit ${files[0]} (+12 −4)`],
-    ["tool", `edit ${files[1]} (+3 −1)`],
-    ["tool", `run unit tests (${files[2]})`],
-    ["success", `unit tests: 48 passed`],
-    ["tool", `edit ${files[2]} (+26 −0) — new tests for acceptance criteria`],
-    ["tool", `run build`],
-    ["info", `Checking acceptance criterion: "${task.plan.acceptanceCriteria[0] ?? "tests pass"}"`],
-    ["warn", `Deprecation warning in ${files[3]} — leaving for a follow-up task`],
-    ["tool", `run full test suite`],
-    ["success", `full suite: all passing`],
-  ];
-  const outro: [LogLine["level"], string][] = [
-    ["info", "Self-review of diff complete; preparing hand-off to verification"],
-    [run.outcome === "verification_failed" ? "warn" : "success", "Agent finished. Handing to verification gate."],
-  ];
-  const finished = run.outcome !== "running";
-  const end = finished ? (run.durationSec ? start + run.durationSec * 1000 : now) : now;
-  const elapsedLines = Math.floor((Math.min(now, end) - start) / LOG_INTERVAL_MS) + 1;
-
-  const all: [LogLine["level"], string][] = [...intro];
-  const loopCount = finished ? loop.length : Math.max(0, elapsedLines - intro.length);
-  for (let i = 0; i < loopCount; i++) all.push(loop[i % loop.length]);
-  if (finished) all.push(...outro);
-  const visible = finished ? all : all.slice(0, Math.max(1, elapsedLines));
-  return visible.slice(-400).map(([level, text], i) => ({
-    seq: i,
-    at: toIso(start + i * LOG_INTERVAL_MS),
-    level,
-    text,
-  }));
-}
-
-function hunk(oldStart: number, lines: [DiffLine["kind"], string][]): DiffLine[] {
-  let o = oldStart;
-  let n = oldStart;
-  const out: DiffLine[] = [{ kind: "hunk", oldNo: null, newNo: null, text: `@@ -${oldStart},${lines.length} +${oldStart},${lines.length} @@` }];
   for (const [kind, text] of lines) {
     if (kind === "context") out.push({ kind, oldNo: o++, newNo: n++, text });
     else if (kind === "del") out.push({ kind, oldNo: o++, newNo: null, text });
@@ -86,87 +141,144 @@ function hunk(oldStart: number, lines: [DiffLine["kind"], string][]): DiffLine[]
   return out;
 }
 
-export function generateDiff(task: Task, repo: Repository): DiffFile[] {
-  const files = filesFor(repo);
-  const h = hashStr(task.id);
-  const isTs = repo.language === "typescript";
-  const mainLines: [DiffLine["kind"], string][] = isTs
-    ? [
-        ["context", "export async function confirmPayment(req: Request) {"],
-        ["del", "  const res = await fetch(BANK_URL, { body: req.body });"],
-        ["add", "  const res = await withRetry(() => fetch(BANK_URL, { body: req.body }), {"],
-        ["add", "    attempts: 3,"],
-        ["add", "    backoffMs: 400,"],
-        ["add", "  });"],
-        ["context", "  if (!res.ok) {"],
-        ["del", "    throw new Error('timeout');"],
-        ["add", "    return pendingConfirmation(req.id); // show progress, never a dead end"],
-        ["context", "  }"],
-      ]
-    : [
-        ["context", "public Result handle(Request request) {"],
-        ["del", "    var client = new LegacyClient(config.timeout());"],
-        ["add", "    var client = clientFactory.create(config.timeout(), RetryPolicy.exponential(3));"],
-        ["context", "    var response = client.send(request);"],
-        ["add", "    auditLog.record(request.id(), response.status());"],
-        ["context", "    return Result.from(response);"],
-        ["context", "}"],
-      ];
-  const testLines: [DiffLine["kind"], string][] = [
-    ["context", ""],
-    ["add", isTs ? "it('retries on 503 then succeeds', async () => {" : "@Test void retriesOn503ThenSucceeds() {"],
-    ["add", isTs ? "  mockBank.failTimes(2).thenOk();" : "    bank.failTimes(2).thenOk();"],
-    ["add", isTs ? "  expect(await confirmPayment(req)).toMatchObject({ ok: true });" : "    assertThat(handler.handle(req).ok()).isTrue();"],
-    ["add", isTs ? "});" : "}"],
-  ];
-  const depLines: [DiffLine["kind"], string][] =
-    task.type === "dependency_upgrade" || task.type === "cve_patch"
-      ? [
-          ["del", `    "version": "${2 + (h % 3)}.${h % 10}.${h % 7}"`],
-          ["add", `    "version": "${3 + (h % 3)}.${(h + 3) % 10}.0"`],
-        ]
-      : [["add", "    // no dependency changes"]];
-  return [
-    { path: files[0], status: "modified", additions: mainLines.filter((l) => l[0] === "add").length, deletions: mainLines.filter((l) => l[0] === "del").length, aiAuthored: true, lines: hunk(40 + (h % 30), mainLines) },
-    { path: files[2], status: "modified", additions: testLines.filter((l) => l[0] === "add").length, deletions: 0, aiAuthored: true, lines: hunk(110, testLines) },
-    { path: files[3], status: "modified", additions: 1, deletions: depLines.filter((l) => l[0] === "del").length, aiAuthored: task.aiAuthoredPct > 50, lines: hunk(12, depLines) },
-  ];
+export function generateDiff(
+  task: Pick<Task, "title" | "acceptanceCriteria">,
+  repo: Repository,
+  files: { path: string; additions: number; deletions: number }[],
+  aiAuthored: boolean,
+): DiffFile[] {
+  const py = repo.ecosystems[0] === "pypi";
+  return files.map((f, i) => {
+    const isTest = /test|spec/.test(f.path);
+    const body: [DiffLine["kind"], string][] = py
+      ? isTest
+        ? [
+            ["context", ""],
+            ["add", "def test_replayed_request_returns_original(client):"],
+            [
+              "add",
+              '    first = client.post("/refunds", json=PAYLOAD, headers={"Idempotency-Key": "k1"})',
+            ],
+            [
+              "add",
+              '    again = client.post("/refunds", json=PAYLOAD, headers={"Idempotency-Key": "k1"})',
+            ],
+            ["add", "    assert again.json() == first.json()"],
+          ]
+        : [
+            ["context", '@router.post("/refunds")'],
+            ["del", "async def create_refund(body: RefundIn):"],
+            [
+              "add",
+              'async def create_refund(body: RefundIn, key: str | None = Header(None, alias="Idempotency-Key")):',
+            ],
+            ["add", "    if key and (cached := await idempotency.get(key)):"],
+            ["add", "        return cached"],
+            ["context", "    refund = await refunds.create(body)"],
+            ["add", "    await idempotency.put(key, refund, ttl=timedelta(hours=24))"],
+            ["context", "    return refund"],
+          ]
+      : isTest
+        ? [
+            ["context", ""],
+            ["add", `test("${task.acceptanceCriteria[0] ?? "works"}", async ({ page }) => {`],
+            ["add", "  await page.goto('/transactions');"],
+            ["add", "  await page.getByRole('button', { name: 'Save filter' }).click();"],
+            [
+              "add",
+              "  await expect(page.getByRole('listitem', { name: /My filter/ })).toBeVisible();",
+            ],
+            ["add", "});"],
+          ]
+        : [
+            ["context", "export function Feature({ items }: Props) {"],
+            ["del", "  const [filter, setFilter] = useState('');"],
+            ["add", "  const { filters, save, remove } = useSavedFilters();"],
+            ["add", "  const [filter, setFilter] = useState(filters[0]?.query ?? '');"],
+            ["context", "  return ("],
+            ["add", "    <SavedFilterMenu filters={filters} onSave={save} onRemove={remove} />"],
+            ["context", "  );"],
+          ];
+    return {
+      path: f.path,
+      status: isTest && f.deletions === 0 ? "added" : "modified",
+      additions: f.additions,
+      deletions: f.deletions,
+      aiAuthored,
+      lines: hunk(12 + i * 30, body),
+    };
+  });
 }
 
-export function diffStats(files: DiffFile[]) {
-  return {
-    files: files.length,
-    additions: files.reduce((s, f) => s + f.additions, 0),
-    deletions: files.reduce((s, f) => s + f.deletions, 0),
-  };
-}
-
-export function flakyTestsFor(repo: Repository) {
-  const names = ["CheckoutFlowTest.completesWithin2s", "SessionTest.refreshKeepsUser", "BatchJobTest.runsAtCutoff", "WebhookTest.retriesOnTimeout"];
-  return names.slice(0, repo.flakyTests).map((name, i) => ({
-    name,
-    failureRatePct: 4 + ((hashStr(repo.id) + i * 7) % 18),
-    lastSeen: repo.lastScanAt,
-  }));
-}
-
-export function gitCandidates(provider: string, account: string, now: number): GitRepoCandidate[] {
-  const slug = account.toLowerCase().replace(/[^a-z0-9-]+/g, "-") || "acme";
-  const list: [string, GitRepoCandidate["language"]][] = [
-    ["core-banking-api", "java"],
-    ["customer-portal-web", "typescript"],
-    ["mobile-bff", "typescript"],
-    ["claims-intake-service", "dotnet"],
-    ["risk-scoring", "python"],
-    ["notifications-worker", "go"],
-    ["legacy-batch-jobs", "java"],
-    ["design-system", "typescript"],
+export function workerLog(run: TestRun, suiteNames: string[]): LogLine[] {
+  const start = Date.parse(run.startedAt);
+  const raw: Raw[] = [
+    ["info", `Webhook ${run.trigger} verified (HMAC) · delivery deduplicated · job enqueued`],
+    [
+      "info",
+      `Worker ${run.environment.worker} (${run.environment.region}) · isolated container · no production secrets`,
+    ],
+    [
+      "info",
+      `Fetched ${run.headSha.slice(0, 7)} (base ${run.baseSha.slice(0, 7)}) · installing from lockfile`,
+    ],
+    ["info", `Test plan: ${suiteNames.join(", ") || "none"}`],
+    ...(run.environment.url
+      ? ([["info", `Preview environment ${run.environment.url} healthy`]] as Raw[])
+      : []),
   ];
-  return list.map(([name, language], i) => ({
+  if (run.status === "running") raw.push(["tool", "Running suites…"]);
+  else if (run.status === "errored")
+    raw.push(
+      ["error", run.infraError ?? "Worker error"],
+      ["warn", "Classified as infrastructure failure: not reported as a product defect"],
+    );
+  else {
+    raw.push([
+      "tool",
+      `${run.totals.passed + run.totals.failed + run.totals.flaky} tests executed`,
+    ]);
+    raw.push(
+      run.status === "passed"
+        ? ["success", "All required checks passed · Check Run conclusion: success"]
+        : ["error", `${run.totals.failed} failed · Check Run conclusion: failure`],
+    );
+    raw.push(["info", "Evidence uploaded: screenshots, traces, console and network logs"]);
+  }
+  return raw.map(([level, text], i) => ({ seq: i, at: toIso(start + i * 4000), level, text }));
+}
+
+const CANDIDATES: [string, string][] = [
+  ["web-app", "TypeScript"],
+  ["payments-api", "Python"],
+  ["ledger-worker", "Python"],
+  ["mobile-bff", "TypeScript"],
+  ["design-system", "TypeScript"],
+  ["data-pipelines", "Python"],
+  ["marketing-site", "TypeScript"],
+  ["internal-tools", "TypeScript"],
+];
+
+export function githubCandidates(
+  db: MockDb,
+  orgId: string,
+  account: string,
+  now: number,
+): GithubRepoCandidate[] {
+  const connected = new Set(
+    db.repositories.filter((r) => r.orgId === orgId).map((r) => r.fullName),
+  );
+  const slug =
+    account
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-|-$/g, "") || "acme";
+  return CANDIDATES.map(([name, language], i) => ({
     fullName: `${slug}/${name}`,
+    private: i !== 6,
     language,
-    defaultBranch: i === 6 ? "master" : "main",
-    private: i !== 7,
-    lastPushAt: toIso(now - (i + 1) * 86_400_000 * (provider === "github" ? 1 : 2)),
+    defaultBranch: "main",
+    pushedAt: toIso(now - (i + 1) * 7_200_000),
+    alreadyConnected: connected.has(`${slug}/${name}`),
   }));
 }

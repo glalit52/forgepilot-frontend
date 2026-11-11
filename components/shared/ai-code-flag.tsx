@@ -5,7 +5,15 @@ import { cn } from "@/lib/utils";
 export const AI_HEAVY_THRESHOLD = 50;
 
 /** Badge when a PR is mostly AI-written ("AI-authored 78%"). Mostly-AI PRs get stricter checks (P1-10). */
-export function AiCodeFlag({ pct, className, compact }: { pct: number; className?: string; compact?: boolean }) {
+export function AiCodeFlag({
+  pct,
+  className,
+  compact,
+}: {
+  pct: number;
+  className?: string;
+  compact?: boolean;
+}) {
   const heavy = pct >= AI_HEAVY_THRESHOLD;
   const badge = (
     <span

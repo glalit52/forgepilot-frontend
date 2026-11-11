@@ -16,19 +16,19 @@ function SheetContent({
 }: React.ComponentProps<typeof SheetPrimitive.Content> & { side?: "left" | "right" }) {
   return (
     <SheetPrimitive.Portal>
-      <SheetPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+      <SheetPrimitive.Overlay className="data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/40" />
       <SheetPrimitive.Content
         className={cn(
-          "bg-background fixed inset-y-0 z-50 flex w-full flex-col gap-4 overflow-y-auto border shadow-lg sm:max-w-md data-[state=open]:animate-in",
+          "bg-background data-[state=open]:animate-in fixed inset-y-0 z-50 flex w-full flex-col gap-4 overflow-y-auto border shadow-lg sm:max-w-md",
           side === "right"
-            ? "right-0 data-[state=open]:slide-in-from-right"
-            : "left-0 data-[state=open]:slide-in-from-left",
+            ? "data-[state=open]:slide-in-from-right right-0"
+            : "data-[state=open]:slide-in-from-left left-0",
           className,
         )}
         {...props}
       >
         {children}
-        <SheetPrimitive.Close className="absolute top-4 right-4 rounded-sm opacity-70 hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+        <SheetPrimitive.Close className="focus-visible:ring-ring absolute top-4 right-4 rounded-sm opacity-70 hover:opacity-100 focus-visible:ring-2 focus-visible:outline-none">
           <XIcon className="size-4" />
           <span className="sr-only">Close</span>
         </SheetPrimitive.Close>
@@ -37,7 +37,7 @@ function SheetContent({
   );
 }
 function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("flex flex-col gap-1.5 p-5 pb-0 pr-10", className)} {...props} />;
+  return <div className={cn("flex flex-col gap-1.5 p-5 pr-10 pb-0", className)} {...props} />;
 }
 function SheetTitle({ className, ...props }: React.ComponentProps<typeof SheetPrimitive.Title>) {
   return <SheetPrimitive.Title className={cn("font-semibold", className)} {...props} />;

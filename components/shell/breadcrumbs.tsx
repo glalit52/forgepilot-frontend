@@ -32,7 +32,7 @@ export function useBreadcrumbLabel(segment: string, label: string | undefined) {
   }, [segment, label, setLabel]);
 }
 
-export function Breadcrumbs() {
+export function Breadcrumbs({ workspace }: { workspace?: string }) {
   const pathname = usePathname();
   const { labels } = useContext(Ctx);
   const segs = pathname.split("/").filter(Boolean);
@@ -43,6 +43,12 @@ export function Breadcrumbs() {
   return (
     <nav aria-label="Breadcrumb" className="min-w-0">
       <ol className="text-muted-foreground flex min-w-0 items-center gap-1 text-sm">
+        {workspace && (
+          <li className="hidden shrink-0 items-center gap-1 sm:flex">
+            <span className="max-w-40 truncate">{workspace}</span>
+            <ChevronRightIcon className="size-3.5" aria-hidden />
+          </li>
+        )}
         {crumbs.map((c, i) => (
           <li key={c.href} className="flex min-w-0 items-center gap-1">
             {i > 0 && <ChevronRightIcon className="size-3.5 shrink-0" aria-hidden />}

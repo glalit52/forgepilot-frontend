@@ -9,7 +9,8 @@
  * green = passed/healthy, amber = at risk/needs review, red = failed/breached,
  * grey = neutral. All foreground/background pairs are tuned for WCAG AA.
  */
-:root {
+:root,
+.light {
   --radius: 0.5rem;
   --background: oklch(0.99 0.002 286);
   --foreground: oklch(0.21 0.02 286);
@@ -178,6 +179,6 @@
     font-feature-settings: "cv11", "ss01";
   }
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-ring;
+    @apply outline-ring outline-2 outline-offset-2;
   }
 }
