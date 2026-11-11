@@ -517,6 +517,7 @@ export function completeTestRun(db: MockDb, run: TestRun, now: number) {
     now,
   );
 
+  captureVisuals(db, run, pr ?? null, now);
   if (!pr) return;
   pr.checkStatus = run.status;
   const tasks = db.tasks.filter(
@@ -736,4 +737,152 @@ export function applyMerge(db: MockDb, pr: PullRequest, by: string, now: number)
   );
   // MAINTAIN: CodeKeeper rescans the updated repository.
   startScan(db, repo, "push", now);
+}
+
+// ---------------------------------------------------------------- ShipSafe visual comparison (PRD §7.5)
+const UI_CHANGE =
+  /redesign|layout|style|dark|density|spacing|contrast|theme|\bui\b|table|page|form|button/i;
+
+/**
+ * Capture baseline-vs-candidate screenshots for the pages this repository tracks.
+ * A change that looks UI-related produces one "changed" snapshot that needs an explicit
+ * baseline decision; decisions already made for the same page carry over to retests.
+ */
+export function captureVisuals(db: MockDb, run: TestRun, pr: PullRequest | null, now: number) {
+  const known = db.visualSnapshots.filter((v) => v.repositoryId === run.repositoryId);
+  if (!known.length) return;
+  const pages = new Map<string, { name: string; route: string; viewport: "desktop" | "mobile" }>();
+  known.forEach((v) =>
+    pages.set(`${v.name}|${v.viewport}`, { name: v.name, route: v.route, viewport: v.viewport }),
+  );
+  const previous = pr ? db.visualSnapshots.filter((v) => v.pullRequestId === pr.id) : [];
+  const task = pr?.taskId ? db.tasks.find((t) => t.id === pr.taskId) : undefined;
+  const uiChange = !!pr && UI_CHANGE.test(`${pr.title} ${task?.description ?? ""}`);
+  const target = [...pages.values()].find((p) => p.viewport === "desktop");
+  let i = 0;
+  for (const page of pages.values()) {
+    i++;
+    const prior = previous.find(
+      (v) => v.name === page.name && v.viewport === page.viewport && v.status !== "unchanged",
+    );
+    const changed =
+      !!prior || (uiChange && page.name === target?.name && page.viewport === "desktop");
+    const carried = prior && prior.status === "approved";
+    db.visualSnapshots.push({
+      id: newId("vis"),
+      orgId: run.orgId,
+      runId: run.id,
+      pullRequestId: pr?.id ?? null,
+      repositoryId: run.repositoryId,
+      name: page.name,
+      route: page.route,
+      viewport: page.viewport,
+      theme: "light",
+      status: !changed ? "unchanged" : carried ? "approved" : "changed",
+      diffPct: changed ? (prior?.diffPct ?? 5.6) : 0,
+      regions: changed ? (prior?.regions ?? [{ x: 6, y: 26, w: 60, h: 36 }]) : [],
+      variant: (i + Math.round(now / 1000)) % 5,
+      baselineSha: run.baseSha,
+      candidateSha: run.headSha,
+      decidedBy: carried ? prior!.decidedBy : null,
+      decidedAt: carried ? prior!.decidedAt : null,
+      comment: carried ? "Approved on an earlier commit of this PR" : null,
+    });
+  }
+}
+
+/** Approve a changed screenshot as the new baseline, or reject it as a visual regression (filed as a bug). */
+export function decideVisual(
+  db: MockDb,
+  id: string,
+  decision: "approved" | "rejected",
+  comment: string,
+  by: string,
+  now: number,
+) {
+  const v = db.visualSnapshots.find((x) => x.id === id)!;
+  v.status = decision;
+  v.decidedBy = by;
+  v.decidedAt = toIso(now);
+  v.comment = comment || null;
+  audit(
+    db,
+    v.orgId,
+    { type: "person", id: by },
+    decision === "approved" ? "visual.baseline_approved" : "visual.rejected",
+    `run:${v.runId}`,
+    `${v.name} (${v.viewport})`,
+    now,
+  );
+  if (decision === "rejected") {
+    const result: TestResult = {
+      id: newId("res"),
+      runId: v.runId,
+      suiteId:
+        db.testRuns.find((r) => r.id === v.runId)!.selectedSuites[0]?.suiteId ??
+        db.testSuites.find((s) => s.repositoryId === v.repositoryId)!.id,
+      name: `visual › ${v.name} (${v.viewport})`,
+      outcome: "failed",
+      classification: "product_defect",
+      durationMs: 0,
+      retries: 0,
+      error: `Rejected visual change (${v.diffPct}% of pixels differ): ${comment}`,
+      evidence: [
+        { kind: "screenshot", label: "Baseline", ref: `artifacts/${v.runId}/${v.id}-baseline.png` },
+        {
+          kind: "screenshot",
+          label: "Candidate",
+          ref: `artifacts/${v.runId}/${v.id}-candidate.png`,
+        },
+      ],
+      firstFailedAt: toIso(now),
+    };
+    db.testResults.push(result);
+    db.bugs.push({
+      id: newId("bug"),
+      orgId: v.orgId,
+      repositoryId: v.repositoryId,
+      runId: v.runId,
+      resultId: result.id,
+      pullRequestId: v.pullRequestId,
+      title: `Visual regression on ${v.name} (${v.viewport})`,
+      severity: "medium",
+      status: "open",
+      commitSha: v.candidateSha,
+      reproSteps: [
+        `Open ${v.route} at ${v.viewport === "desktop" ? "1280×800" : "390×844"}`,
+        "Compare with the approved baseline",
+        comment,
+      ],
+      stackTrace: "Visual comparison: rejected by reviewer",
+      suspectedCause: "A style or layout change in this PR altered the highlighted region.",
+      createdAt: toIso(now),
+      taskId: null,
+      assigneeId: null,
+    });
+  }
+  return v;
+}
+
+// ---------------------------------------------------------------- GitHub issue import (DP-010)
+const PRIORITY_LABEL = [
+  [/urgent|p0|critical/i, "urgent"],
+  [/high|p1|security|bug/i, "high"],
+  [/low|p3|good first issue/i, "low"],
+] as const;
+
+export function issuePriority(labels: string[]): "urgent" | "high" | "medium" | "low" {
+  for (const [re, p] of PRIORITY_LABEL) if (labels.some((l) => re.test(l))) return p;
+  return "medium";
+}
+
+/** "- [ ] item" checklists in the issue body become acceptance criteria. */
+export function issueCriteria(body: string, title: string): string[] {
+  const items = body
+    .split("\n")
+    .map((l) => l.match(/^\s*[-*]\s*\[[ xX]?\]\s*(.+)$/)?.[1]?.trim())
+    .filter((x): x is string => !!x && x.length >= 3);
+  return items.length
+    ? items
+    : [`${title} works as described in the issue`, "Tests added and passing"];
 }

@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import * as S from "@/lib/schemas";
 import { api } from "./client";
+import { isLive, poll } from "@/lib/live/status";
 
 type Q = Record<string, string | number | boolean | undefined | null>;
 const LIVE = 1500;
@@ -33,7 +34,7 @@ export function useSession(opts: { enabled?: boolean } = {}) {
     queryKey: ["session"],
     queryFn: () => api.get(S.SessionInfoSchema, "/session"),
     staleTime: 30_000,
-    refetchInterval: 15_000,
+    refetchInterval: poll(15_000),
     enabled: opts.enabled ?? true,
   });
 }
@@ -125,7 +126,7 @@ export function useOverview() {
   return useQuery({
     queryKey: ["overview"],
     queryFn: () => api.get(S.OverviewSchema, "/overview"),
-    refetchInterval: 5000,
+    refetchInterval: poll(5000),
   });
 }
 export function useProjects() {
@@ -151,7 +152,11 @@ export function useRepositories(projectId?: string) {
     queryKey: ["repositories", projectId],
     queryFn: () => api.get(z.array(S.RepositorySummarySchema), "/repositories", { projectId }),
     refetchInterval: (q) =>
-      q.state.data?.some((r) => r.indexStatus === "indexing" || r.scanRunning) ? LIVE : false,
+      isLive()
+        ? false
+        : q.state.data?.some((r) => r.indexStatus === "indexing" || r.scanRunning)
+          ? LIVE
+          : false,
   });
 }
 export function useRepository(id: string) {
@@ -160,9 +165,12 @@ export function useRepository(id: string) {
     queryFn: () => api.get(S.RepositoryDetailSchema, `/repositories/${id}`),
     enabled: !!id,
     refetchInterval: (q) =>
-      q.state.data?.repository.scanRunning || q.state.data?.repository.indexStatus === "indexing"
-        ? LIVE
-        : false,
+      isLive()
+        ? false
+        : q.state.data?.repository.scanRunning ||
+            q.state.data?.repository.indexStatus === "indexing"
+          ? LIVE
+          : false,
   });
 }
 export function useRunScan() {
@@ -176,14 +184,14 @@ export function useDevPilotOverview() {
   return useQuery({
     queryKey: ["devpilot"],
     queryFn: () => api.get(S.DevPilotOverviewSchema, "/devpilot/overview"),
-    refetchInterval: 3000,
+    refetchInterval: poll(3000),
   });
 }
 export function useTasks(filters: Q = {}) {
   return useQuery({
     queryKey: ["tasks", filters],
     queryFn: () => api.get(z.array(S.TaskListItemSchema), "/tasks", filters),
-    refetchInterval: 5000,
+    refetchInterval: poll(5000),
   });
 }
 const ACTIVE_TASK = new Set(["queued", "running", "waiting_input", "verifying"]);
@@ -193,11 +201,13 @@ export function useTask(id: string) {
     queryFn: () => api.get(S.TaskDetailSchema, `/tasks/${id}`),
     enabled: !!id,
     refetchInterval: (q) =>
-      q.state.data &&
-      (ACTIVE_TASK.has(q.state.data.task.status) ||
-        q.state.data.children.some((c) => ACTIVE_TASK.has(c.status)))
-        ? LIVE
-        : false,
+      isLive()
+        ? false
+        : q.state.data &&
+            (ACTIVE_TASK.has(q.state.data.task.status) ||
+              q.state.data.children.some((c) => ACTIVE_TASK.has(c.status)))
+          ? LIVE
+          : false,
   });
 }
 export function useCreateTask() {
@@ -218,7 +228,7 @@ export function useSessions(status?: string) {
   return useQuery({
     queryKey: ["sessions", status],
     queryFn: () => api.get(z.array(S.SessionListItemSchema), "/sessions", { status }),
-    refetchInterval: 4000,
+    refetchInterval: poll(4000),
   });
 }
 export function useSessionDetail(id: string) {
@@ -227,9 +237,11 @@ export function useSessionDetail(id: string) {
     queryFn: () => api.get(S.SessionDetailSchema, `/sessions/${id}`),
     enabled: !!id,
     refetchInterval: (q) =>
-      q.state.data && ["running", "waiting", "queued"].includes(q.state.data.session.status)
-        ? LIVE
-        : false,
+      isLive()
+        ? false
+        : q.state.data && ["running", "waiting", "queued"].includes(q.state.data.session.status)
+          ? LIVE
+          : false,
   });
 }
 export function useSessionLog(id: string, live: boolean) {
@@ -237,7 +249,7 @@ export function useSessionLog(id: string, live: boolean) {
     queryKey: ["session-log", id],
     queryFn: () => api.get(S.LiveLogSchema, `/sessions/${id}/log`),
     enabled: !!id,
-    refetchInterval: live ? 1200 : false,
+    refetchInterval: live ? poll(1200) : false,
   });
 }
 export function useSessionDiff(id: string, enabled = true) {
@@ -265,7 +277,7 @@ export function useExecutionWorkspaces() {
   return useQuery({
     queryKey: ["exec-workspaces"],
     queryFn: () => api.get(z.array(WorkspaceRowSchema), "/workspaces"),
-    refetchInterval: 5000,
+    refetchInterval: poll(5000),
   });
 }
 export function useAgents() {
@@ -294,7 +306,7 @@ export function useShipSafeOverview() {
   return useQuery({
     queryKey: ["shipsafe"],
     queryFn: () => api.get(S.ShipSafeOverviewSchema, "/shipsafe/overview"),
-    refetchInterval: 5000,
+    refetchInterval: poll(5000),
   });
 }
 const SuiteRowSchema = S.TestSuiteSchema.extend({
@@ -320,7 +332,7 @@ export function useTestRuns(filters: Q = {}) {
   return useQuery({
     queryKey: ["runs", filters],
     queryFn: () => api.get(z.array(S.TestRunListItemSchema), "/test-runs", filters),
-    refetchInterval: 4000,
+    refetchInterval: poll(4000),
   });
 }
 export function useTestRun(id: string) {
@@ -329,7 +341,11 @@ export function useTestRun(id: string) {
     queryFn: () => api.get(S.TestRunDetailSchema, `/test-runs/${id}`),
     enabled: !!id,
     refetchInterval: (q) =>
-      q.state.data && ["running", "queued"].includes(q.state.data.run.status) ? LIVE : false,
+      isLive()
+        ? false
+        : q.state.data && ["running", "queued"].includes(q.state.data.run.status)
+          ? LIVE
+          : false,
   });
 }
 export function useStartTestRun() {
@@ -344,7 +360,7 @@ export function useBugs(filters: Q = {}) {
   return useQuery({
     queryKey: ["bugs", filters],
     queryFn: () => api.get(z.array(S.BugListItemSchema), "/bugs", filters),
-    refetchInterval: 5000,
+    refetchInterval: poll(5000),
   });
 }
 export function useBug(id: string) {
@@ -352,7 +368,7 @@ export function useBug(id: string) {
     queryKey: ["bug", id],
     queryFn: () => api.get(S.BugDetailSchema, `/bugs/${id}`),
     enabled: !!id,
-    refetchInterval: 3000,
+    refetchInterval: poll(3000),
   });
 }
 export function useBugAction(id: string) {
@@ -366,7 +382,7 @@ export function usePullRequests(filters: Q = {}) {
   return useQuery({
     queryKey: ["prs", filters],
     queryFn: () => api.get(z.array(S.PullRequestListItemSchema), "/pull-requests", filters),
-    refetchInterval: 5000,
+    refetchInterval: poll(5000),
   });
 }
 export function usePullRequest(id: string) {
@@ -375,11 +391,13 @@ export function usePullRequest(id: string) {
     queryFn: () => api.get(S.PullRequestDetailSchema, `/pull-requests/${id}`),
     enabled: !!id,
     refetchInterval: (q) =>
-      q.state.data &&
-      (["running", "queued"].includes(q.state.data.pullRequest.checkStatus) ||
-        q.state.data.bugs.some((b) => b.status === "fix_in_progress"))
-        ? LIVE
-        : false,
+      isLive()
+        ? false
+        : q.state.data &&
+            (["running", "queued"].includes(q.state.data.pullRequest.checkStatus) ||
+              q.state.data.bugs.some((b) => b.status === "fix_in_progress"))
+          ? LIVE
+          : false,
   });
 }
 export function usePullRequestDiff(id: string, enabled = true) {
@@ -403,7 +421,7 @@ export function useCodeKeeperOverview() {
   return useQuery({
     queryKey: ["codekeeper"],
     queryFn: () => api.get(S.CodeKeeperOverviewSchema, "/codekeeper/overview"),
-    refetchInterval: 6000,
+    refetchInterval: poll(6000),
   });
 }
 const DependencyRowSchema = S.DependencySchema.extend({
@@ -423,7 +441,7 @@ export function useFindings(filters: Q = {}) {
   return useQuery({
     queryKey: ["findings", filters],
     queryFn: () => api.get(z.array(S.FindingListItemSchema), "/findings", filters),
-    refetchInterval: 6000,
+    refetchInterval: poll(6000),
   });
 }
 export function useFinding(id: string | null) {
@@ -450,7 +468,7 @@ export function useApprovals(status?: string) {
   return useQuery({
     queryKey: ["approvals", status],
     queryFn: () => api.get(z.array(ApprovalRowSchema), "/approvals", { status }),
-    refetchInterval: 4000,
+    refetchInterval: poll(4000),
   });
 }
 export function useDecideApproval() {
@@ -551,7 +569,7 @@ export function useNotifications() {
   return useQuery({
     queryKey: ["notifications"],
     queryFn: () => api.get(z.array(S.NotificationSchema), "/notifications"),
-    refetchInterval: 10_000,
+    refetchInterval: poll(10_000),
   });
 }
 export function useMarkNotificationsRead() {
@@ -567,4 +585,30 @@ export function useSearch(q: string, enabled = true) {
 }
 export function useResetDemo() {
   return useAction(() => api.post(S.OkSchema, "/demo/reset"));
+}
+
+// ---------------------------------------------------------------- ShipSafe visual comparison & GitHub issue import
+export function useVisualSnapshots(filters: Q = {}) {
+  return useQuery({
+    queryKey: ["visuals", filters],
+    queryFn: () => api.get(z.array(S.VisualSnapshotListItemSchema), "/visual-snapshots", filters),
+    refetchInterval: poll(6000),
+  });
+}
+export function useDecideVisual() {
+  return useAction(({ id, ...input }: { id: string } & S.VisualDecisionInput) =>
+    api.post(S.VisualSnapshotSchema, `/visual-snapshots/${id}/decision`, input),
+  );
+}
+export function useGithubIssues(filters: Q = {}, enabled = true) {
+  return useQuery({
+    queryKey: ["github-issues", filters],
+    queryFn: () => api.get(z.array(S.GithubIssueListItemSchema), "/github/issues", filters),
+    enabled,
+  });
+}
+export function useImportIssues() {
+  return useAction((input: S.ImportIssuesInput) =>
+    api.post(S.ImportIssuesResultSchema, "/github/issues/import", input),
+  );
 }

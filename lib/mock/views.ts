@@ -176,6 +176,21 @@ export function releasePolicy(db: MockDb, pr: PullRequest): PolicyCheck[] {
   const openBugs = db.bugs.filter(
     (b) => b.pullRequestId === pr.id && (b.status === "open" || b.status === "fix_in_progress"),
   ).length;
+  const visuals = db.visualSnapshots.filter((v) => v.runId === run?.id);
+  if (visuals.length) {
+    const pending = visuals.filter((v) => v.status === "changed").length;
+    const rejected = visuals.filter((v) => v.status === "rejected").length;
+    checks.push({
+      name: "Visual changes approved",
+      required: true,
+      status: rejected ? "failed" : pending ? "pending" : "passed",
+      detail: rejected
+        ? `${rejected} visual change(s) rejected`
+        : pending
+          ? `${pending} screenshot(s) changed — approve the new baseline or reject`
+          : `${visuals.length} screenshots match or were approved`,
+    });
+  }
   checks.push({
     name: "No open product defects",
     required: true,

@@ -625,6 +625,88 @@ for org_id, count in HIST.items():
                     "status": "closed", "openedAt": iso(at - timedelta(minutes=2)), "mergedAt": None, "mergedBy": None, "aiAuthoredPct": 20, "additions": 120, "deletions": 40, "changedFiles": 6,
                     "taskId": None, "checkStatus": "failed", "reviewers": [], "reviewState": "changes_requested", "latestRunId": rid})
 
+
+# --------------------------------------------------------------------------- ShipSafe visual comparisons (PRD §7.5)
+VISUAL_PAGES = {
+    "repo_web": [("Dashboard", "/dashboard"), ("Transactions", "/transactions"), ("Billing settings", "/settings/billing"), ("Invoice history", "/settings/invoices"), ("Sign in", "/login")],
+    "repo_harbor": [("Booking form", "/book"), ("Appointments", "/appointments"), ("Messages", "/messages")],
+    "repo_fs_shop": [("Product page", "/p/oak-table"), ("Cart", "/cart"), ("Checkout", "/checkout")],
+    "repo_recipes": [("Recipe", "/r/shakshuka"), ("Home", "/")],
+}
+CHANGED = {
+    # pr id -> {page name: (diffPct, status, regions, decidedBy)}
+    "pr_h1": {"Billing settings": (12.4, "changed", [[8, 22, 54, 30], [8, 58, 84, 14]], None), "Invoice history": (3.1, "changed", [[60, 12, 32, 8]], None)},
+    "pr_006": {"Dashboard": (6.8, "changed", [[4, 10, 92, 10]], None), "Transactions": (4.2, "approved", [[4, 30, 60, 40]], "u_priya"), "Billing settings": (5.5, "changed", [[8, 22, 54, 30]], None)},
+    "pr_001": {"Transactions": (9.7, "approved", [[62, 8, 30, 10], [4, 30, 60, 40]], "u_alex")},
+    "pr_h6": {"Booking form": (2.2, "approved", [[10, 40, 50, 12]], "u_sofia")},
+    "pr_h5": {"Checkout": (7.9, "changed", [[55, 30, 38, 40]], None), "Cart": (1.4, "rejected", [[60, 70, 30, 10]], "u_kenji")},
+}
+visuals = []
+vis_n = 0
+for pr in prs:
+    pages = VISUAL_PAGES.get(pr["repositoryId"])
+    run = next((r for r in runs if r["id"] == pr.get("latestRunId")), None)
+    if not pages or not run or run["status"] == "running" or pr["id"].startswith("pr_task_h") or pr["id"].startswith("pr_hx"):
+        continue
+    changes = CHANGED.get(pr["id"], {})
+    for name, route in pages:
+        for viewport in (["desktop", "mobile"] if name in changes or name in ("Dashboard", "Booking form", "Checkout") else ["desktop"]):
+            vis_n += 1
+            diff, status, regions, by = changes.get(name, (0.0, "unchanged", [], None)) if viewport == "desktop" else ((round(changes[name][0] * 0.8, 1), changes[name][1], changes[name][2], changes[name][3]) if name in changes else (0.0, "unchanged", [], None))
+            visuals.append({
+                "id": f"vis_{vis_n:03d}", "orgId": pr["orgId"], "runId": run["id"], "pullRequestId": pr["id"], "repositoryId": pr["repositoryId"],
+                "name": name, "route": route, "viewport": viewport, "theme": "dark" if pr["id"] == "pr_006" else "light",
+                "status": status, "diffPct": diff, "regions": [{"x": a, "y": b, "w": c, "h": d} for a, b, c, d in regions],
+                "variant": vis_n % 5, "baselineSha": pr["baseSha"], "candidateSha": run["headSha"],
+                "decidedBy": by, "decidedAt": iso(ago(hours=R.randint(1, 20))) if by else None,
+                "comment": "Intended: new spacing from the redesign" if status == "approved" else ("Cart badge overlaps the icon on small screens" if status == "rejected" else None),
+            })
+
+# --------------------------------------------------------------------------- GitHub issues available to import (DP-010)
+ISSUES = {
+    "repo_web": [
+        ("Add bulk actions to the transactions table", "Users want to select several transactions and export or tag them.\n\n- [ ] Checkbox per row and select-all\n- [ ] Export selected as CSV\n- [ ] Tag selected", ["enhancement", "priority: high"]),
+        ("Empty state for new accounts shows a spinner forever", "When an account has no transactions the table never stops loading.\n\n- [ ] Show an empty state with a CTA\n- [ ] Regression test", ["bug", "priority: urgent"]),
+        ("Keyboard shortcut to open search", "Power users asked for `/` to focus search.\n\n- [ ] `/` focuses search\n- [ ] Doesn't trigger inside inputs", ["enhancement", "good first issue"]),
+        ("Upgrade to React 19.3", "Track the minor upgrade; check for deprecation warnings.", ["dependencies"]),
+    ],
+    "repo_payments": [
+        ("Webhook signature check should use constant-time compare", "Use `hmac.compare_digest` for signature verification.\n\n- [ ] Constant-time comparison\n- [ ] Test with an invalid signature", ["security", "priority: high"]),
+        ("Refund reasons as an enum", "Free-text reasons make reporting hard.\n\n- [ ] Enum with migration of existing values\n- [ ] API docs updated", ["enhancement"]),
+        ("Flaky test: test_payout_schedule_dst", "Fails around DST changes.", ["tests", "flaky"]),
+    ],
+    "repo_bff": [
+        ("Return 429 with Retry-After from the rate limiter", "Clients can't back off correctly today.\n\n- [ ] 429 status\n- [ ] Retry-After header\n- [ ] Contract test", ["bug"]),
+        ("Cache /v2/profile for 60 seconds", "Profile is fetched on every screen.", ["performance", "priority: low"]),
+    ],
+    "repo_ledger": [("Document the reconciliation job", "No runbook exists for the nightly job.", ["docs"])],
+    "repo_harbor": [
+        ("Reschedule appointment from the email link", "Patients should reschedule without signing in.\n\n- [ ] Signed link valid 48h\n- [ ] Shows next 5 free slots", ["enhancement", "client: Harbor"]),
+        ("Booking form loses data on back navigation", "Steps 1–3 reset when pressing back.", ["bug", "priority: high"]),
+    ],
+    "repo_fs_shop": [("Show stock level on product page", "- [ ] 'Only 3 left' under 5 units\n- [ ] Hidden when out of stock", ["enhancement"])],
+    "repo_recipes": [("Print-friendly recipe view", "- [ ] Print stylesheet\n- [ ] Hide nav and ads", ["enhancement"])],
+}
+issues = []
+iss_n = 0
+for repo_id, items in ISSUES.items():
+    rep = next(r for r in repositories if r["id"] == repo_id)
+    members = [m["userId"] for m in memberships if m["orgId"] == rep["orgId"]]
+    for k, (title, body, labels) in enumerate(items):
+        iss_n += 1
+        issues.append({"id": f"iss_{iss_n:03d}", "orgId": rep["orgId"], "repositoryId": repo_id, "number": 140 + iss_n * 3, "title": title, "body": body,
+                       "labels": labels, "author": R.choice(members), "createdAt": iso(ago(days=R.randint(1, 30))), "state": "open",
+                       "url": f"{rep['url']}/issues/{140 + iss_n * 3}", "comments": R.randint(0, 9), "importedTaskId": None})
+# Issues already imported as tasks (DevPilot tasks whose source is a GitHub issue).
+for t in tasks:
+    if t["source"] == "github_issue" and t["sourceRef"] and not t["id"].startswith("task_h"):
+        rep = next(r for r in repositories if r["id"] == t["repositoryId"])
+        iss_n += 1
+        num = int(t["sourceRef"].lstrip("#"))
+        issues.append({"id": f"iss_{iss_n:03d}", "orgId": t["orgId"], "repositoryId": t["repositoryId"], "number": num, "title": t["title"], "body": t["description"],
+                       "labels": ["enhancement"], "author": t["createdBy"], "createdAt": t["createdAt"], "state": "open",
+                       "url": f"{rep['url']}/issues/{num}", "comments": 2, "importedTaskId": t["id"]})
+
 # --------------------------------------------------------------------------- approvals
 approvals = [
     {"id": "apr_001", "orgId": "ws_lumen", "action": "modify_protected_path", "status": "pending",
@@ -744,7 +826,7 @@ data = {
              "generatedAt": iso(NOW), "version": 3},
     "users": users, "organizations": orgs, "memberships": memberships, "invitations": invitations,
     "projects": projects, "repositories": repositories, "integrations": integrations, "agents": agents, "policies": policies,
-    "testSuites": suites, "dependencies": dependencies, "findings": findings, "healthHistory": healthHistory, "scans": scans,
+    "testSuites": suites, "visualSnapshots": visuals, "githubIssues": issues, "dependencies": dependencies, "findings": findings, "healthHistory": healthHistory, "scans": scans,
     "tasks": tasks, "sessions": sessions, "workspaces": workspaces, "pullRequests": prs, "testRuns": runs, "testResults": results, "bugs": bugs,
     "approvals": approvals, "usageRecords": usage, "invoices": invoices, "auditLogs": audit, "notifications": notifications, "apiKeys": api_keys,
 }

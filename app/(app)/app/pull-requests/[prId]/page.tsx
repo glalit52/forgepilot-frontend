@@ -1,4 +1,5 @@
 "use client";
+import { VisualSection } from "@/components/shipsafe/visual-section";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -150,6 +151,7 @@ export default function PullRequestPage() {
                 </Card>
 
                 <BugsSection d={d} role={role} />
+                {d.pullRequest.latestRunId && <VisualSection runId={d.pullRequest.latestRunId} />}
 
                 <Card>
                   <CardHeader>

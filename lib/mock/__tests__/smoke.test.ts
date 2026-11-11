@@ -44,6 +44,8 @@ const GETS = [
   "/notifications",
   "/search?q=pay",
   "/github/repositories",
+  "/visual-snapshots",
+  "/github/issues",
 ];
 
 describe("mock API smoke", () => {

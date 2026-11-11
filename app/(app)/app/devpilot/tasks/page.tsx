@@ -10,6 +10,7 @@ import { DataTable, FilterBar, type Column } from "@/components/shared/data-tabl
 import { FilterSelect } from "@/components/shared/filter-select";
 import { MockDataBadge } from "@/components/shared/misc";
 import { PageHeader } from "@/components/shared/page-header";
+import { ImportIssuesButton } from "@/components/devpilot/import-issues-dialog";
 import { EmptyState, ErrorState, TableSkeleton } from "@/components/shared/states";
 import { TaskStatusBadge } from "@/components/shared/status-badge";
 import { useAppUI } from "@/components/app/app-ui";
@@ -155,7 +156,12 @@ export default function TasksPage() {
         title="Tasks"
         description="Work delegated to coding agents: from issue to verified pull request. Filters stay in the URL so you can share a view."
         meta={<MockDataBadge />}
-        actions={<NewTaskButton />}
+        actions={
+          <>
+            <ImportIssuesButton />
+            <NewTaskButton />
+          </>
+        }
       />
       <FilterBar>
         <div className="flex min-w-52 flex-1 flex-col gap-1">

@@ -11,6 +11,8 @@ import {
   BugSchema,
   DependencySchema,
   FindingSchema,
+  GithubIssueSchema,
+  VisualSnapshotSchema,
   HealthSnapshotSchema,
   IntegrationSchema,
   InvitationSchema,
@@ -77,6 +79,7 @@ export const SessionInfoSchema = z.object({
     pendingApprovals: z.number(),
     reviewReady: z.number(),
     unreadNotifications: z.number(),
+    pendingVisuals: z.number(),
   }),
 });
 export type SessionInfo = z.infer<typeof SessionInfoSchema>;
@@ -806,3 +809,45 @@ export const PlanSchema = z.object({
   features: z.array(z.string()),
 });
 export type Plan = z.infer<typeof PlanSchema>;
+
+// ---------------------------------------------------------------- visual comparison & issue import
+export const VisualSnapshotListItemSchema = VisualSnapshotSchema.extend({
+  repositoryName: z.string(),
+  pullRequestNumber: z.number().nullable(),
+  pullRequestTitle: z.string().nullable(),
+  decidedByUser: UserSchema.nullable(),
+  bugId: z.string().nullable(),
+});
+export type VisualSnapshotListItem = z.infer<typeof VisualSnapshotListItemSchema>;
+
+export const VisualDecisionInputSchema = z
+  .object({ decision: z.enum(["approved", "rejected"]), comment: z.string().trim().default("") })
+  .refine((v) => v.decision === "approved" || v.comment.length >= 5, {
+    message: "Describe what looks wrong (at least 5 characters)",
+    path: ["comment"],
+  });
+export type VisualDecisionInput = z.input<typeof VisualDecisionInputSchema>;
+
+export const GithubIssueListItemSchema = GithubIssueSchema.extend({
+  repositoryName: z.string(),
+  authorUser: UserSchema.nullable(),
+  importedTaskStatus: TaskStatusSchema.nullable(),
+  /** What the import will produce, so users can preview before importing. */
+  suggestedPriority: PrioritySchema,
+  suggestedCriteria: z.array(z.string()),
+});
+export type GithubIssueListItem = z.infer<typeof GithubIssueListItemSchema>;
+
+export const ImportIssuesInputSchema = z.object({
+  issueIds: z
+    .array(z.string())
+    .min(1, "Select at least one issue")
+    .max(20, "Import at most 20 issues at a time"),
+  agentId: z.string().min(1, "Choose an agent"),
+  launch: z.boolean(),
+});
+export type ImportIssuesInput = z.infer<typeof ImportIssuesInputSchema>;
+export const ImportIssuesResultSchema = z.object({
+  tasks: z.array(TaskSchema),
+  skipped: z.array(z.string()),
+});

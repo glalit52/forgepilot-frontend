@@ -95,6 +95,16 @@ export function checkIntegrity(db: MockDb): string[] {
     sameOrg(b, runs.get(b.runId), `bug ${b.id}`);
   });
   db.approvals.forEach((a) => ref(orgs.has(a.orgId), `approval ${a.id} → unknown org`));
+  db.visualSnapshots.forEach((v) => {
+    ref(runs.has(v.runId), `visual ${v.id} → unknown run`);
+    sameOrg(v, runs.get(v.runId), `visual ${v.id}`);
+    ref(!v.pullRequestId || prs.has(v.pullRequestId), `visual ${v.id} → unknown PR`);
+  });
+  db.githubIssues.forEach((i) => {
+    ref(repos.has(i.repositoryId), `issue ${i.id} → unknown repo`);
+    sameOrg(i, repos.get(i.repositoryId), `issue ${i.id}`);
+    ref(!i.importedTaskId || tasks.has(i.importedTaskId), `issue ${i.id} → unknown task`);
+  });
   db.integrations.forEach((i) => ref(orgs.has(i.orgId), `integration ${i.id} → unknown org`));
   db.auditLogs.forEach((a) => ref(orgs.has(a.orgId), `audit ${a.id} → unknown org`));
   return problems;
@@ -188,4 +198,20 @@ export function fakeSha(seed: string) {
     out += h.toString(16).padStart(8, "0");
   }
   return out.slice(0, 40);
+}
+
+const gv = globalThis as unknown as { __fpMutations?: number };
+
+/** Bumped by the dispatcher after every successful write. */
+export function bumpVersion() {
+  gv.__fpMutations = (gv.__fpMutations ?? 0) + 1;
+}
+
+/**
+ * A cheap fingerprint of "has anything changed?". Writes bump the counter; the
+ * simulation's transitions (session finished, run failed, scan done…) always
+ * append an audit entry, so the audit length catches those.
+ */
+export function dbFingerprint(db: MockDb) {
+  return `${gv.__fpMutations ?? 0}:${db.auditLogs.length}:${db.notifications.length}`;
 }

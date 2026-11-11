@@ -13,6 +13,7 @@ import { CommandPalette } from "./command-palette";
 import { ContextPanelProvider } from "./context-panel";
 import { Logo } from "./logo";
 import { NotificationsBell } from "./notifications-bell";
+import { LiveIndicator, LiveUpdates } from "./live-updates";
 import { Sidebar, SidebarNav } from "./sidebar";
 import { ThemeToggle } from "./theme-toggle";
 import { UserMenu } from "./user-menu";
@@ -66,6 +67,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <BreadcrumbProvider>
       <ContextPanelProvider>
         <AppUIProvider>
+          <LiveUpdates />
           <div className="flex min-h-screen">
             <Sidebar collapsed={collapsed} onToggle={toggle} />
             <div className="flex min-w-0 flex-1 flex-col">
@@ -85,6 +87,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <div className="hidden xl:block">
                   <MockDataBadge />
                 </div>
+                <LiveIndicator />
                 <CommandPalette />
                 <NotificationsBell />
                 <Button variant="ghost" size="icon" asChild aria-label="Docs">

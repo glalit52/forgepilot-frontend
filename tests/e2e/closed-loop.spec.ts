@@ -41,6 +41,12 @@ test("closed loop: failing verification becomes a fix task, retest passes, human
   const merge = page.getByRole("button", { name: "Simulate GitHub merge (demo)" });
   await expect(merge).toBeDisabled();
   await page.getByRole("button", { name: "Approve PR" }).click();
+  // The change touched the UI, so a screenshot changed: still blocked until a person approves the new baseline.
+  await expect(merge).toBeDisabled();
+  await page
+    .getByRole("button", { name: /^Approve new baseline/ })
+    .first()
+    .click();
   await expect(merge).toBeEnabled();
   await merge.click();
   await expect(page.getByText(/Merged/).first()).toBeVisible();

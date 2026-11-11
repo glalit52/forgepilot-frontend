@@ -23,6 +23,10 @@ Guardrails the backend must enforce (not just the UI):
 | GET | `/session/personas` | None | — | see below | Demo personas for the sign-in screen. |
 | GET | `/session/status` | None | — | see below | Whether the visitor is signed in and has a workspace (used by onboarding before a workspace exists). |
 | GET | `/session` | Any workspace member | — | `SessionInfo` | Current user, active workspace, role, other workspaces and badge counts. |
+| GET | `/visual-snapshots` | Any workspace member | — | `VisualSnapshotListItem[]` | Visual comparisons (baseline vs candidate). ?status= &pullRequestId= &runId= &repositoryId= |
+| POST | `/visual-snapshots/:id/decision` | Permission `suite.manage` | `VisualDecisionInput` | `VisualSnapshot` | Approve a changed screenshot as the new baseline, or reject it (files a visual-regression bug). Decisions are explicit and audited. |
+| GET | `/github/issues` | Any workspace member | — | `GithubIssueListItem[]` | Open issues in connected repositories, with what an import would produce. ?repositoryId= &q= &imported=true\|false |
+| POST | `/github/issues/import` | Permission `task.create` | `ImportIssuesInput` | `ImportIssuesResult` | Import GitHub issues as DevPilot tasks: checklists become acceptance criteria, labels set priority. Already-imported issues are skipped. |
 | POST | `/session` | None | `SignInInput` | `SessionInfo` | Sign in as a demo persona (sets fp_session and fp_ws cookies). |
 | POST | `/session/workspace` | Any workspace member | `SwitchWorkspaceInput` | `SessionInfo` | Switch the active workspace. |
 | POST | `/signup` | None | `SignUpInput` | `User` | Create an account (mock GitHub OAuth or email). The user then creates a workspace in onboarding. |
@@ -217,6 +221,36 @@ Current user, active workspace, role, other workspaces and badge counts.
 
 - **Auth:** Any workspace member
 - **Response 200:** [`SessionInfo`](#sessioninfo)
+
+### GET `/visual-snapshots`
+
+Visual comparisons (baseline vs candidate). ?status= &pullRequestId= &runId= &repositoryId=
+
+- **Auth:** Any workspace member
+- **Response 200:** [`VisualSnapshotListItem[]`](#visualsnapshotlistitem)
+
+### POST `/visual-snapshots/:id/decision`
+
+Approve a changed screenshot as the new baseline, or reject it (files a visual-regression bug). Decisions are explicit and audited.
+
+- **Auth:** Permission `suite.manage`
+- **Request body:** [`VisualDecisionInput`](#visualdecisioninput)
+- **Response 200:** [`VisualSnapshot`](#visualsnapshot)
+
+### GET `/github/issues`
+
+Open issues in connected repositories, with what an import would produce. ?repositoryId= &q= &imported=true|false
+
+- **Auth:** Any workspace member
+- **Response 200:** [`GithubIssueListItem[]`](#githubissuelistitem)
+
+### POST `/github/issues/import`
+
+Import GitHub issues as DevPilot tasks: checklists become acceptance criteria, labels set priority. Already-imported issues are skipped.
+
+- **Auth:** Permission `task.create`
+- **Request body:** [`ImportIssuesInput`](#importissuesinput)
+- **Response 200:** [`ImportIssuesResult`](#importissuesresult)
 
 ### POST `/session`
 
@@ -3900,6 +3934,127 @@ Reset all mock data to the seed (demo mode).
 }
 ```
 
+### GithubIssueListItem
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/GithubIssueListItem",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "repositoryId": {
+      "type": "string"
+    },
+    "number": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "title": {
+      "type": "string"
+    },
+    "body": {
+      "type": "string"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "author": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "open",
+        "closed"
+      ]
+    },
+    "url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "comments": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "importedTaskId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "repositoryName": {
+      "type": "string"
+    },
+    "authorUser": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/User"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "importedTaskStatus": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/TaskStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "suggestedPriority": {
+      "$ref": "#/schemas/Priority"
+    },
+    "suggestedCriteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "repositoryId",
+    "number",
+    "title",
+    "body",
+    "labels",
+    "author",
+    "createdAt",
+    "state",
+    "url",
+    "comments",
+    "importedTaskId",
+    "repositoryName",
+    "authorUser",
+    "importedTaskStatus",
+    "suggestedPriority",
+    "suggestedCriteria"
+  ],
+  "additionalProperties": false
+}
+```
+
 ### GithubRepoCandidate
 
 ```json
@@ -4053,6 +4208,68 @@ Reset all mock data to the seed (demo mode).
     "repositoryId",
     "weekStart",
     "score"
+  ],
+  "additionalProperties": false
+}
+```
+
+### ImportIssuesInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/ImportIssuesInput",
+  "type": "object",
+  "properties": {
+    "issueIds": {
+      "minItems": 1,
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "agentId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "launch": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "issueIds",
+    "agentId",
+    "launch"
+  ],
+  "additionalProperties": false
+}
+```
+
+### ImportIssuesResult
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/ImportIssuesResult",
+  "type": "object",
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/schemas/Task"
+      }
+    },
+    "skipped": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "tasks",
+    "skipped"
   ],
   "additionalProperties": false
 }
@@ -7312,12 +7529,16 @@ Reset all mock data to the seed (demo mode).
         },
         "unreadNotifications": {
           "type": "number"
+        },
+        "pendingVisuals": {
+          "type": "number"
         }
       },
       "required": [
         "pendingApprovals",
         "reviewReady",
-        "unreadNotifications"
+        "unreadNotifications",
+        "pendingVisuals"
       ],
       "additionalProperties": false
     }
@@ -9660,6 +9881,370 @@ Reset all mock data to the seed (demo mode).
     "name",
     "email",
     "title"
+  ],
+  "additionalProperties": false
+}
+```
+
+### VisualDecisionInput
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/VisualDecisionInput",
+  "type": "object",
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "rejected"
+      ]
+    },
+    "comment": {
+      "default": "",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision",
+    "comment"
+  ],
+  "additionalProperties": false
+}
+```
+
+### VisualSnapshot
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/VisualSnapshot",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "pullRequestId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "repositoryId": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "route": {
+      "type": "string"
+    },
+    "viewport": {
+      "type": "string",
+      "enum": [
+        "desktop",
+        "mobile"
+      ]
+    },
+    "theme": {
+      "type": "string",
+      "enum": [
+        "light",
+        "dark"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "unchanged",
+        "changed",
+        "new",
+        "approved",
+        "rejected"
+      ]
+    },
+    "diffPct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "regions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "w": {
+            "type": "number"
+          },
+          "h": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "variant": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "baselineSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "candidateSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "decidedBy": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "decidedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "comment": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "runId",
+    "pullRequestId",
+    "repositoryId",
+    "name",
+    "route",
+    "viewport",
+    "theme",
+    "status",
+    "diffPct",
+    "regions",
+    "variant",
+    "baselineSha",
+    "candidateSha",
+    "decidedBy",
+    "decidedAt",
+    "comment"
+  ],
+  "additionalProperties": false
+}
+```
+
+### VisualSnapshotListItem
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/schemas/VisualSnapshotListItem",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "orgId": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "pullRequestId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "repositoryId": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "route": {
+      "type": "string"
+    },
+    "viewport": {
+      "type": "string",
+      "enum": [
+        "desktop",
+        "mobile"
+      ]
+    },
+    "theme": {
+      "type": "string",
+      "enum": [
+        "light",
+        "dark"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "unchanged",
+        "changed",
+        "new",
+        "approved",
+        "rejected"
+      ]
+    },
+    "diffPct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "regions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "w": {
+            "type": "number"
+          },
+          "h": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "variant": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "baselineSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "candidateSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "decidedBy": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "decidedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "comment": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "repositoryName": {
+      "type": "string"
+    },
+    "pullRequestNumber": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "pullRequestTitle": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "decidedByUser": {
+      "anyOf": [
+        {
+          "$ref": "#/schemas/User"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "bugId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "runId",
+    "pullRequestId",
+    "repositoryId",
+    "name",
+    "route",
+    "viewport",
+    "theme",
+    "status",
+    "diffPct",
+    "regions",
+    "variant",
+    "baselineSha",
+    "candidateSha",
+    "decidedBy",
+    "decidedAt",
+    "comment",
+    "repositoryName",
+    "pullRequestNumber",
+    "pullRequestTitle",
+    "decidedByUser",
+    "bugId"
   ],
   "additionalProperties": false
 }

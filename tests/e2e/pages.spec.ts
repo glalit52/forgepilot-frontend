@@ -17,6 +17,7 @@ const PAGES = [
   "/app/shipsafe/runs",
   "/app/shipsafe/bugs",
   "/app/shipsafe/bugs/bug_002",
+  "/app/shipsafe/visual",
   "/app/codekeeper",
   "/app/codekeeper/dependencies",
   "/app/codekeeper/findings",

@@ -1,5 +1,6 @@
 import {
   BarChart3Icon,
+  ImagesIcon,
   BugIcon,
   CheckSquareIcon,
   CreditCardIcon,
@@ -27,7 +28,7 @@ export interface NavItem {
   label: string;
   icon: LucideIcon;
   exact?: boolean;
-  badge?: "approvals" | "review";
+  badge?: "approvals" | "review" | "visual";
 }
 export interface NavGroup {
   label?: string;
@@ -60,6 +61,7 @@ export const NAV: NavGroup[] = [
       { href: "/app/shipsafe", label: "Testing dashboard", icon: RadarIcon, exact: true },
       { href: "/app/shipsafe/suites", label: "Test suites", icon: FlaskConicalIcon },
       { href: "/app/shipsafe/runs", label: "Verification runs", icon: ListChecksIcon },
+      { href: "/app/shipsafe/visual", label: "Visual review", icon: ImagesIcon, badge: "visual" },
       { href: "/app/shipsafe/bugs", label: "Bugs", icon: BugIcon },
     ],
   },
@@ -102,6 +104,7 @@ export const SEGMENT_LABEL: Record<string, string> = {
   shipsafe: "ShipSafe",
   suites: "Test suites",
   runs: "Verification runs",
+  visual: "Visual review",
   bugs: "Bugs",
   codekeeper: "CodeKeeper",
   dependencies: "Dependencies",

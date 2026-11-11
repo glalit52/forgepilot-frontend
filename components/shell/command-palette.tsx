@@ -118,6 +118,18 @@ export function CommandPalette() {
               <PlusIcon /> New DevPilot task
             </CommandItem>
             <CommandItem
+              value="import github issues tasks"
+              onSelect={() => go("/app/devpilot/tasks?import=1")}
+            >
+              <ListChecksIcon /> Import GitHub issues as tasks
+            </CommandItem>
+            <CommandItem
+              value="visual review screenshots baseline"
+              onSelect={() => go("/app/shipsafe/visual")}
+            >
+              <RadarIcon /> Review visual changes
+            </CommandItem>
+            <CommandItem
               value="run tests verification shipsafe"
               onSelect={() => go("/app/shipsafe/runs?new=1")}
             >

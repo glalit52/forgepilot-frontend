@@ -94,6 +94,18 @@ describe("closed loop (PRD §10)", () => {
     // No auto-merge: merging without human review is refused.
     expect(post(`/pull-requests/${prId}/merge`, {}).status).toBe(409);
     expect(post(`/pull-requests/${prId}/review`, { decision: "approved" }).status).toBe(200);
+    // A UI change produced a changed screenshot: merge waits for an explicit baseline decision.
+    const blocked = post(`/pull-requests/${prId}/merge`, {});
+    expect(blocked.status).toBe(409);
+    expect((blocked.body as { error: string }).error).toMatch(/Visual changes approved/);
+    const changed = (
+      get("/visual-snapshots", MAYA, `pullRequestId=${prId}&status=changed`).body as {
+        id: string;
+      }[]
+    )[0];
+    expect(post(`/visual-snapshots/${changed.id}/decision`, { decision: "approved" }).status).toBe(
+      200,
+    );
     expect(post(`/pull-requests/${prId}/merge`, {}).status).toBe(200);
     expect((get(`/tasks/${id}`).body as { task: { status: string } }).task.status).toBe(
       "completed",
@@ -249,5 +261,101 @@ describe("demo freshness", () => {
     expect(Date.parse(a.expiresAt)).toBeGreaterThan(later);
     expect(shifted.usageRecords.at(-1)!.date).toBe("2026-11-20");
     expect(() => loadMockDb(shifted)).not.toThrow();
+  });
+});
+
+describe("visual comparison (PRD §7.5)", () => {
+  it("rejecting a changed screenshot files a visual-regression bug and blocks the PR", () => {
+    const v = (
+      get("/visual-snapshots", MAYA, "pullRequestId=pr_h1&status=changed").body as {
+        id: string;
+        name: string;
+      }[]
+    )[0];
+    expect(
+      post(`/visual-snapshots/${v.id}/decision`, { decision: "rejected", comment: "" }).status,
+    ).toBe(422);
+    expect(
+      post(`/visual-snapshots/${v.id}/decision`, {
+        decision: "rejected",
+        comment: "Save button overlaps the card",
+      }).status,
+    ).toBe(200);
+    const pr = get("/pull-requests/pr_h1").body as {
+      bugs: { title: string }[];
+      releasePolicy: { name: string; status: string }[];
+    };
+    expect(pr.bugs.some((b) => b.title.startsWith(`Visual regression on ${v.name}`))).toBe(true);
+    expect(pr.releasePolicy.find((c) => c.name === "Visual changes approved")!.status).toBe(
+      "failed",
+    );
+  });
+  it("only members who manage suites can decide, and decisions are one-time", () => {
+    const v = (get("/visual-snapshots", MAYA, "status=changed").body as { id: string }[])[0];
+    expect(
+      post(
+        `/visual-snapshots/${v.id}/decision`,
+        { decision: "approved" },
+        C("u_jordan", "ws_lumen"),
+      ).status,
+    ).toBe(403);
+    expect(post(`/visual-snapshots/${v.id}/decision`, { decision: "approved" }).status).toBe(200);
+    expect(post(`/visual-snapshots/${v.id}/decision`, { decision: "approved" }).status).toBe(409);
+  });
+});
+
+describe("GitHub issue import (DP-010)", () => {
+  it("turns checklists into acceptance criteria and labels into priority, and skips duplicates", () => {
+    const issues = get("/github/issues", MAYA, "imported=false").body as {
+      id: string;
+      number: number;
+      title: string;
+      suggestedPriority: string;
+      suggestedCriteria: string[];
+    }[];
+    const urgent = issues.find((i) => i.title.startsWith("Empty state for new accounts"))!;
+    expect(urgent.suggestedPriority).toBe("urgent");
+    expect(urgent.suggestedCriteria).toEqual(["Show an empty state with a CTA", "Regression test"]);
+    const r = post("/github/issues/import", {
+      issueIds: [urgent.id],
+      agentId: "agent_claude_lumen",
+      launch: false,
+    });
+    expect(r.status).toBe(200);
+    const task = (
+      r.body as {
+        tasks: {
+          id: string;
+          source: string;
+          sourceRef: string;
+          acceptanceCriteria: string[];
+          priority: string;
+        }[];
+      }
+    ).tasks[0];
+    expect(task).toMatchObject({
+      source: "github_issue",
+      sourceRef: `#${urgent.number}`,
+      priority: "urgent",
+      acceptanceCriteria: urgent.suggestedCriteria,
+    });
+    const again = post("/github/issues/import", {
+      issueIds: [urgent.id],
+      agentId: "agent_claude_lumen",
+      launch: false,
+    });
+    expect((again.body as { tasks: unknown[]; skipped: string[] }).tasks).toHaveLength(0);
+    expect((again.body as { skipped: string[] }).skipped[0]).toMatch(/already/);
+  });
+  it("viewers can't import and other workspaces' issues are invisible", () => {
+    expect(
+      post(
+        "/github/issues/import",
+        { issueIds: ["iss_001"], agentId: "agent_claude_lumen", launch: false },
+        C("u_jordan", "ws_lumen"),
+      ).status,
+    ).toBe(403);
+    const nw = get("/github/issues", C("u_sofia", "ws_northwind")).body as { orgId: string }[];
+    expect(nw.every((i) => i.orgId === "ws_northwind")).toBe(true);
   });
 });

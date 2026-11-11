@@ -540,6 +540,48 @@ export const ApiKeySchema = z.object({
 });
 export type ApiKey = z.infer<typeof ApiKeySchema>;
 
+/** ShipSafe visual comparison: baseline vs candidate screenshot for one page/viewport (PRD §7.5). */
+export const VisualSnapshotSchema = z.object({
+  id: z.string(),
+  orgId: z.string(),
+  runId: z.string(),
+  pullRequestId: z.string().nullable(),
+  repositoryId: z.string(),
+  name: z.string(),
+  route: z.string(),
+  viewport: z.enum(["desktop", "mobile"]),
+  theme: z.enum(["light", "dark"]),
+  /** changed = waiting for an explicit baseline decision. */
+  status: z.enum(["unchanged", "changed", "new", "approved", "rejected"]),
+  diffPct: z.number().min(0).max(100),
+  regions: z.array(z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() })),
+  variant: z.number().int(),
+  baselineSha: sha,
+  candidateSha: sha,
+  decidedBy: z.string().nullable(),
+  decidedAt: dt.nullable(),
+  comment: z.string().nullable(),
+});
+export type VisualSnapshot = z.infer<typeof VisualSnapshotSchema>;
+
+/** An issue in a connected GitHub repository that can be imported as a DevPilot task (DP-010). */
+export const GithubIssueSchema = z.object({
+  id: z.string(),
+  orgId: z.string(),
+  repositoryId: z.string(),
+  number: z.number().int(),
+  title: z.string(),
+  body: z.string(),
+  labels: z.array(z.string()),
+  author: z.string(),
+  createdAt: dt,
+  state: z.enum(["open", "closed"]),
+  url: z.url(),
+  comments: z.number().int(),
+  importedTaskId: z.string().nullable(),
+});
+export type GithubIssue = z.infer<typeof GithubIssueSchema>;
+
 export const MockDbSchema = z.object({
   meta: z.object({ note: z.string(), generatedAt: dt, version: z.number() }).loose(),
   users: z.array(UserSchema),
@@ -552,6 +594,8 @@ export const MockDbSchema = z.object({
   agents: z.array(AgentSchema),
   policies: z.array(PolicySchema),
   testSuites: z.array(TestSuiteSchema),
+  visualSnapshots: z.array(VisualSnapshotSchema),
+  githubIssues: z.array(GithubIssueSchema),
   dependencies: z.array(DependencySchema),
   findings: z.array(FindingSchema),
   healthHistory: z.array(HealthSnapshotSchema),

@@ -78,6 +78,7 @@ export function SidebarNav({
   const counts = {
     approvals: data?.counts.pendingApprovals ?? 0,
     review: data?.counts.reviewReady ?? 0,
+    visual: data?.counts.pendingVisuals ?? 0,
   };
   return (
     <nav aria-label="Main" className="flex flex-col gap-4">

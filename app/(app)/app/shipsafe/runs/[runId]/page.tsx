@@ -21,6 +21,7 @@ import { Progress } from "@/components/ui/progress";
 import { LogViewer } from "@/components/shared/log-viewer";
 import { CommitSha, CopyButton, MockDataBadge } from "@/components/shared/misc";
 import { PageHeader, Section } from "@/components/shared/page-header";
+import { VisualSection } from "@/components/shipsafe/visual-section";
 import { RunSummary } from "@/components/shared/run-summary";
 import { PageSkeleton, ErrorState } from "@/components/shared/states";
 import { RunStatusBadge, SeverityBadge } from "@/components/shared/status-badge";
@@ -401,6 +402,8 @@ export default function RunDetailPage() {
               </p>
             )}
           </Section>
+
+          <VisualSection runId={d.run.id} />
 
           <Section
             title="Results"

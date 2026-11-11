@@ -14,9 +14,12 @@ import { can, meetsRole, type Permission } from "@/lib/domain/permissions";
 import { checkTaskAction, BOARD_COLUMNS } from "@/lib/domain/workflow";
 import { INTEGRATION_PROVIDERS, providerById } from "@/lib/domain/integrations";
 import { METER_INFO, PLANS, planById } from "@/lib/domain/plans";
-import { getDb, newId, resetDb, toIso, fakeSha } from "./db";
+import { bumpVersion, getDb, newId, resetDb, toIso, fakeSha } from "./db";
 import {
   applyMerge,
+  decideVisual,
+  issueCriteria,
+  issuePriority,
   audit,
   endSession,
   INDEX_MS,
@@ -145,6 +148,12 @@ function sessionInfo(ctx: Ctx) {
       pendingApprovals: inOrg(db.approvals, ctx.orgId).filter((a) => a.status === "pending").length,
       reviewReady: inOrg(db.tasks, ctx.orgId).filter((t) => t.status === "review_ready").length,
       unreadNotifications: inOrg(db.notifications, ctx.orgId).filter((n) => !n.read).length,
+      pendingVisuals: inOrg(db.visualSnapshots, ctx.orgId).filter(
+        (v) =>
+          v.status === "changed" &&
+          db.pullRequests.find((p) => p.id === v.pullRequestId && p.status === "open")
+            ?.latestRunId === v.runId,
+      ).length,
     },
   };
 }
@@ -472,6 +481,165 @@ export const routes: RouteDef[] = [
     response: S.SessionInfoSchema,
     handler: sessionInfo,
   },
+  // ===== ShipSafe visual comparison
+  {
+    method: "GET",
+    path: "/visual-snapshots",
+    auth: "member",
+    summary:
+      "Visual comparisons (baseline vs candidate). ?status= &pullRequestId= &runId= &repositoryId=",
+    response: z.array(S.VisualSnapshotListItemSchema),
+    handler: (ctx) => {
+      const q = ctx.query;
+      return inOrg(ctx.db.visualSnapshots, ctx.orgId)
+        .filter(
+          (v) =>
+            (!q.get("status") || q.get("status")!.split(",").includes(v.status)) &&
+            (!q.get("pullRequestId") || v.pullRequestId === q.get("pullRequestId")) &&
+            (!q.get("runId") || v.runId === q.get("runId")) &&
+            (!q.get("repositoryId") || v.repositoryId === q.get("repositoryId")),
+        )
+        .filter(
+          (v) =>
+            q.get("runId") ||
+            q.get("pullRequestId") ||
+            !v.pullRequestId ||
+            ctx.db.pullRequests.find((p) => p.id === v.pullRequestId)?.latestRunId === v.runId,
+        )
+        .sort(
+          (a, b) =>
+            (a.status === "changed" ? -1 : 0) - (b.status === "changed" ? -1 : 0) ||
+            b.diffPct - a.diffPct,
+        )
+        .map((v) => {
+          const pr = v.pullRequestId
+            ? ctx.db.pullRequests.find((p) => p.id === v.pullRequestId)
+            : undefined;
+          return {
+            ...v,
+            repositoryName: ctx.db.repositories.find((r) => r.id === v.repositoryId)!.fullName,
+            pullRequestNumber: pr?.number ?? null,
+            pullRequestTitle: pr?.title ?? null,
+            decidedByUser: ctx.db.users.find((u) => u.id === v.decidedBy) ?? null,
+            bugId:
+              ctx.db.bugs.find(
+                (b) =>
+                  b.runId === v.runId &&
+                  b.title.startsWith(`Visual regression on ${v.name} (${v.viewport})`),
+              )?.id ?? null,
+          };
+        });
+    },
+  },
+  {
+    method: "POST",
+    path: "/visual-snapshots/:id/decision",
+    auth: "suite.manage",
+    summary:
+      "Approve a changed screenshot as the new baseline, or reject it (files a visual-regression bug). Decisions are explicit and audited.",
+    request: S.VisualDecisionInputSchema,
+    response: S.VisualSnapshotSchema,
+    handler: (ctx) => {
+      const v = own(ctx, ctx.db.visualSnapshots, ctx.params.id, "Visual snapshot");
+      if (v.status !== "changed" && v.status !== "new")
+        throw new HttpError(409, "Only changed screenshots need a decision");
+      const input = body(S.VisualDecisionInputSchema, ctx.body);
+      return decideVisual(ctx.db, v.id, input.decision, input.comment ?? "", me(ctx).id, ctx.now);
+    },
+  },
+
+  // ===== DevPilot: import GitHub issues as tasks
+  {
+    method: "GET",
+    path: "/github/issues",
+    auth: "member",
+    summary:
+      "Open issues in connected repositories, with what an import would produce. ?repositoryId= &q= &imported=true|false",
+    response: z.array(S.GithubIssueListItemSchema),
+    handler: (ctx) => {
+      const q = (ctx.query.get("q") ?? "").toLowerCase();
+      const imported = ctx.query.get("imported");
+      return inOrg(ctx.db.githubIssues, ctx.orgId)
+        .filter(
+          (i) =>
+            i.state === "open" &&
+            (!ctx.query.get("repositoryId") || i.repositoryId === ctx.query.get("repositoryId")) &&
+            (!q ||
+              i.title.toLowerCase().includes(q) ||
+              `#${i.number}`.includes(q) ||
+              i.labels.some((l) => l.includes(q))) &&
+            (imported === null || (imported === "true") === !!i.importedTaskId),
+        )
+        .sort(
+          (a, b) =>
+            Number(!!a.importedTaskId) - Number(!!b.importedTaskId) ||
+            b.createdAt.localeCompare(a.createdAt),
+        )
+        .map((i) => ({
+          ...i,
+          repositoryName: ctx.db.repositories.find((r) => r.id === i.repositoryId)!.fullName,
+          authorUser: ctx.db.users.find((u) => u.id === i.author) ?? null,
+          importedTaskStatus: i.importedTaskId
+            ? (ctx.db.tasks.find((t) => t.id === i.importedTaskId)?.status ?? null)
+            : null,
+          suggestedPriority: issuePriority(i.labels),
+          suggestedCriteria: issueCriteria(i.body, i.title),
+        }));
+    },
+  },
+  {
+    method: "POST",
+    path: "/github/issues/import",
+    auth: "task.create",
+    summary:
+      "Import GitHub issues as DevPilot tasks: checklists become acceptance criteria, labels set priority. Already-imported issues are skipped.",
+    request: S.ImportIssuesInputSchema,
+    response: S.ImportIssuesResultSchema,
+    handler: (ctx) => {
+      const input = body(S.ImportIssuesInputSchema, ctx.body);
+      const agent = own(ctx, ctx.db.agents, input.agentId, "Agent");
+      const created: Task[] = [];
+      const skipped: string[] = [];
+      for (const id of input.issueIds) {
+        const issue = own(ctx, ctx.db.githubIssues, id, "Issue");
+        if (issue.importedTaskId) {
+          skipped.push(`#${issue.number} is already task ${issue.importedTaskId}`);
+          continue;
+        }
+        const task = createTask(ctx, {
+          repositoryId: issue.repositoryId,
+          title: issue.title,
+          description: `Imported from GitHub issue #${issue.number}.\n\n${issue.body}`.slice(
+            0,
+            2000,
+          ),
+          acceptanceCriteria: issueCriteria(issue.body, issue.title),
+          constraints: ["Keep public APIs backwards compatible"],
+          priority: issuePriority(issue.labels),
+          agentId: agent.id,
+          targetBranch: "main",
+          budgetUsd: agent.defaultBudgetUsd,
+          timeoutMin: agent.defaultTimeoutMin,
+          launch: input.launch,
+          source: "github_issue",
+          sourceRef: `#${issue.number}`,
+        });
+        issue.importedTaskId = task.id;
+        audit(
+          ctx.db,
+          ctx.orgId,
+          person(ctx),
+          "issue.imported",
+          `task:${task.id}`,
+          `#${issue.number} ${issue.title}`,
+          ctx.now,
+        );
+        created.push(task);
+      }
+      return { tasks: created, skipped };
+    },
+  },
+
   {
     method: "POST",
     path: "/session",
@@ -3043,6 +3211,7 @@ export function dispatch(
           },
         };
     }
+    if (method === "POST") bumpVersion();
     return { status: 200, body: result, setCookies: ctx.setCookies };
   } catch (e) {
     if (e instanceof HttpError)
