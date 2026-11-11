@@ -49,7 +49,9 @@ test("a developer imports a GitHub issue; its checklist becomes acceptance crite
   await expect(page.getByRole("heading", { level: 1 })).toContainText(
     "Empty state for new accounts",
   );
-  await expect(page.getByRole("listitem").filter({ hasText: "Show an empty state with a CTA" }).first()).toBeVisible();
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Show an empty state with a CTA" }).first(),
+  ).toBeVisible();
   await expect(page.getByText("Urgent").first()).toBeVisible();
 
   // Importing again is impossible: the issue is marked as imported.
