@@ -14,7 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useResetDemo, useSession } from "@/lib/api/hooks";
+import { useAuthOptions, useLogout, useResetDemo, useSession } from "@/lib/api/hooks";
 import { initials } from "@/lib/domain/format";
 import { ROLE_LABEL } from "@/lib/domain/permissions";
 import { useSignInAndGo } from "./use-sign-in";
@@ -24,6 +24,8 @@ export function UserMenu({ compact }: { compact?: boolean }) {
   const { data } = useSession();
   const { signInAs, pending } = useSignInAndGo();
   const reset = useResetDemo();
+  const logout = useLogout();
+  const demo = useAuthOptions().data?.demo ?? false;
   const router = useRouter();
   if (!data) return <div className="bg-muted size-8 animate-pulse rounded-full" />;
   const { user, personas } = data;
@@ -56,10 +58,12 @@ export function UserMenu({ compact }: { compact?: boolean }) {
             {user.title || user.email}
           </div>
         </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel className="flex items-center gap-1.5">
-          <UserCogIcon className="size-3.5" aria-hidden /> Demo: sign in as someone else
-        </DropdownMenuLabel>
+        {personas.length > 0 && <DropdownMenuSeparator />}
+        {personas.length > 0 && (
+          <DropdownMenuLabel className="flex items-center gap-1.5">
+            <UserCogIcon className="size-3.5" aria-hidden /> Demo: sign in as someone else
+          </DropdownMenuLabel>
+        )}
         <DropdownMenuGroup>
           {personas.map((p) => (
             <DropdownMenuItem
@@ -83,24 +87,28 @@ export function UserMenu({ compact }: { compact?: boolean }) {
             <BookOpenIcon /> Docs & API contract
           </Link>
         </DropdownMenuItem>
-        <DropdownMenuItem
-          onSelect={() =>
-            reset.mutate(undefined, {
-              onSuccess: () =>
-                toast.success("Demo data reset", {
-                  description: "Everything is back to the seeded story.",
-                }),
-            })
-          }
-        >
-          <RotateCcwIcon /> Reset demo data
-        </DropdownMenuItem>
+        {demo && (
+          <DropdownMenuItem
+            onSelect={() =>
+              reset.mutate(undefined, {
+                onSuccess: () =>
+                  toast.success("Demo data reset", {
+                    description: "Everything is back to the seeded story.",
+                  }),
+              })
+            }
+          >
+            <RotateCcwIcon /> Reset demo data
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem
           onSelect={() => {
-            document.cookie = "fp_session=; Max-Age=0; path=/";
-            document.cookie = "fp_ws=; Max-Age=0; path=/";
-            router.push("/login");
-            router.refresh();
+            // The server ends the session: its cookie is HttpOnly and can't be cleared from here.
+            const leave = () => {
+              router.push("/login");
+              router.refresh();
+            };
+            logout.mutate(undefined, { onSettled: leave });
           }}
         >
           <LogOutIcon /> Sign out

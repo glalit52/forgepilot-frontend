@@ -75,6 +75,29 @@ export function useSwitchWorkspace() {
     },
   });
 }
+/** Sign-in methods the API offers; decides between the demo screens and real sign-in. */
+export function useAuthOptions() {
+  return useQuery({
+    queryKey: ["auth-options"],
+    queryFn: () => api.get(S.AuthOptionsSchema, "/auth/options"),
+    staleTime: Infinity,
+  });
+}
+export function useLogin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: z.input<typeof S.LoginInputSchema>) =>
+      api.post(S.AuthResultSchema, "/auth/login", input),
+    onSuccess: () => qc.clear(),
+  });
+}
+export function useLogout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post(S.OkSchema, "/auth/logout"),
+    onSuccess: () => qc.clear(),
+  });
+}
 export function useSignUp() {
   return useMutation({
     mutationFn: (input: S.SignUpInput) => api.post(S.UserSchema, "/signup", input),
@@ -101,8 +124,8 @@ export function useGithubRepositories(account: string, enabled: boolean) {
   });
 }
 export function useInstallGithub() {
-  return useAction((account: string) =>
-    api.post(S.IntegrationSchema, "/github/install", { account }),
+  return useAction((input: { account: string; installationId?: number }) =>
+    api.post(S.IntegrationSchema, "/github/install", input),
   );
 }
 export function useConnectRepositories() {

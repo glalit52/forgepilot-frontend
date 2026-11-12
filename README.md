@@ -63,6 +63,16 @@ docs/PRD.md              the product requirements (source of truth)
 docs/api-contract.md     every endpoint with request/response schemas (generated)
 ```
 
-## Swapping in the real backend
+## Running against the real backend
+
+Start [`forgepilot-backend`](https://github.com/glalit52/forgepilot-backend), then start this app with two settings:
+
+```bash
+BACKEND_URL=http://localhost:8080 NEXT_PUBLIC_API_BASE=/api/v1 pnpm dev
+```
+
+Requests go through this app to the backend, so the sign-in cookie stays on one address. The app asks the API which sign-in methods it offers and adapts: with the real backend you get email and password (plus GitHub once the backend has it configured), real sign-out, and the GitHub App is installed on github.com. Without those two settings the app runs on its built-in demo exactly as before.
+
+## How the backend contract works
 
 Screens never call URLs directly. They use hooks in `lib/api/hooks.ts`, and every response is checked against its schema. The backend team implements the endpoints in [`docs/api-contract.md`](docs/api-contract.md), then sets `NEXT_PUBLIC_API_BASE` to the backend's address. That contract file is generated from the code, and a test fails if it drifts.
