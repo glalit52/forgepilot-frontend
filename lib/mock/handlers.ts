@@ -3129,6 +3129,46 @@ export const routes: RouteDef[] = [
     },
   },
   {
+    method: "GET",
+    path: "/auth/options",
+    auth: "public",
+    summary:
+      "Which sign-in methods this API offers. The mock is always a demo; the real backend reports password and GitHub sign-in.",
+    response: S.AuthOptionsSchema,
+    handler: () => ({
+      demo: true,
+      password: false,
+      github: false,
+      githubSignInUrl: null,
+      githubAppInstallUrl: null,
+    }),
+  },
+  {
+    method: "POST",
+    path: "/auth/login",
+    auth: "public",
+    summary: "Sign in with email and password (real backend). The demo has no passwords.",
+    request: S.LoginInputSchema,
+    response: S.AuthResultSchema,
+    handler: () => {
+      throw new HttpError(401, "The demo has no passwords: pick a persona to sign in.");
+    },
+  },
+  {
+    method: "POST",
+    path: "/auth/logout",
+    auth: "public",
+    summary: "End the current session and clear the session cookies.",
+    response: S.OkSchema,
+    handler: (ctx) => {
+      ctx.setCookies = [
+        { name: "fp_session", value: "" },
+        { name: "fp_ws", value: "" },
+      ];
+      return { ok: true };
+    },
+  },
+  {
     method: "POST",
     path: "/demo/reset",
     auth: "public",

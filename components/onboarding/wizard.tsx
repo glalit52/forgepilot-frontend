@@ -42,6 +42,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  useAuthOptions,
   useConnectRepositories,
   useCreateWorkspace,
   useFirstRun,
@@ -341,6 +342,24 @@ function GithubStep({
   const [open, setOpen] = useState(false);
   const install = useInstallGithub();
   const scopes = Object.keys(SCOPE_COPY);
+  // Real backend: installing happens on github.com, which sends the user back here
+  // with ?installation_id=…; that id is what links the installation to this workspace.
+  const installUrl = useAuthOptions().data?.githubAppInstallUrl ?? null;
+  const installationId = Number(useSearchParams().get("installation_id")) || null;
+  const { mutate: linkInstallation, isIdle: notLinkedYet } = install;
+  useEffect(() => {
+    if (!installationId || !notLinkedYet) return;
+    linkInstallation(
+      { account: account.trim() || "github", installationId },
+      {
+        onSuccess: (i) => {
+          toast.success("GitHub App installed", { description: `Connected to ${i.account}` });
+          onDone();
+        },
+        onError: (e) => toast.error("Installation failed", { description: e.message }),
+      },
+    );
+  }, [installationId, notLinkedYet, linkInstallation, account, onDone]);
   return (
     <Card>
       <CardHeader>
@@ -371,9 +390,17 @@ function GithubStep({
             GitHub at any time.
           </span>
         </div>
-        <Button className="self-start" onClick={() => setOpen(true)}>
-          <GithubMark /> Install GitHub App
-        </Button>
+        {installUrl ? (
+          <Button className="self-start" asChild disabled={install.isPending}>
+            <a href={installUrl}>
+              <GithubMark /> {install.isPending ? "Linking installation…" : "Install GitHub App"}
+            </a>
+          </Button>
+        ) : (
+          <Button className="self-start" onClick={() => setOpen(true)}>
+            <GithubMark /> Install GitHub App
+          </Button>
+        )}
       </CardContent>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
@@ -412,16 +439,19 @@ function GithubStep({
             <Button
               disabled={account.trim().length < 2 || install.isPending}
               onClick={() =>
-                install.mutate(account.trim(), {
-                  onSuccess: () => {
-                    setOpen(false);
-                    toast.success("GitHub App installed", {
-                      description: `Connected to ${account.trim()}`,
-                    });
-                    onDone();
+                install.mutate(
+                  { account: account.trim() },
+                  {
+                    onSuccess: () => {
+                      setOpen(false);
+                      toast.success("GitHub App installed", {
+                        description: `Connected to ${account.trim()}`,
+                      });
+                      onDone();
+                    },
+                    onError: (e) => toast.error("Installation failed", { description: e.message }),
                   },
-                  onError: (e) => toast.error("Installation failed", { description: e.message }),
-                })
+                )
               }
             >
               Install & authorize

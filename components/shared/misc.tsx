@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import { useAuthOptions } from "@/lib/api/hooks";
 import {
   CheckIcon,
   CopyIcon,
@@ -18,6 +19,9 @@ import { cn } from "@/lib/utils";
 
 /** Mock data is always clearly marked. */
 export function MockDataBadge() {
+  // Shown unless the API says it serves real data.
+  const options = useAuthOptions().data;
+  if (options && !options.demo) return null;
   return (
     <Badge variant="warning" title="All numbers are computed from fictional demo data">
       <FlaskConicalIcon aria-hidden /> Demo data

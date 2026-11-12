@@ -26,7 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Monogram } from "@/components/shared/misc";
-import { useConnectIntegration, useDisconnectIntegration } from "@/lib/api/hooks";
+import { useAuthOptions, useConnectIntegration, useDisconnectIntegration } from "@/lib/api/hooks";
 import { ConnectIntegrationInputSchema, type IntegrationView } from "@/lib/schemas";
 import type { IntegrationCategory } from "@/lib/schemas";
 import { formatDate } from "@/lib/domain/format";
@@ -40,6 +40,41 @@ const AVAILABILITY: Record<
   beta: { label: "Beta", variant: "info" },
   coming_soon: { label: "Coming soon", variant: "neutral" },
   enterprise: { label: "Enterprise", variant: "accent" },
+};
+
+interface CredentialField {
+  key: string;
+  label: string;
+  secret?: boolean;
+  placeholder?: string;
+}
+const OIDC_FIELDS: CredentialField[] = [
+  { key: "issuer", label: "Issuer URL", placeholder: "https://company.okta.com" },
+  { key: "clientId", label: "Client ID" },
+  { key: "clientSecret", label: "Client secret", secret: true },
+  { key: "domain", label: "Your email domain", placeholder: "company.com" },
+];
+/** What a real backend needs to connect each provider. The demo asks for none of it. */
+const CREDENTIAL_FIELDS: Record<string, CredentialField[]> = {
+  claude_code: [{ key: "apiKey", label: "Anthropic API key", secret: true }],
+  openai_codex: [{ key: "apiKey", label: "OpenAI API key", secret: true }],
+  slack: [
+    {
+      key: "webhookUrl",
+      label: "Incoming webhook URL",
+      secret: true,
+      placeholder: "https://hooks.slack.com/services/…",
+    },
+  ],
+  teams: [{ key: "webhookUrl", label: "Incoming webhook URL", secret: true }],
+  linear: [{ key: "apiKey", label: "Linear API key", secret: true }],
+  jira: [
+    { key: "baseUrl", label: "Jira site", placeholder: "https://company.atlassian.net" },
+    { key: "email", label: "Account email" },
+    { key: "apiToken", label: "API token", secret: true },
+  ],
+  okta: OIDC_FIELDS,
+  entra: OIDC_FIELDS,
 };
 
 /** What stops working when an integration in this category is disconnected. */
@@ -239,6 +274,8 @@ export function ConnectIntegrationDialog({
   const id = useId();
   const connect = useConnectIntegration();
   const [account, setAccount] = useState("");
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const real = useAuthOptions().data?.demo === false;
   const [err, setErr] = useState<string | null>(null);
   const [upgrade, setUpgrade] = useState<string | null>(null);
   const open = !!integration;
@@ -248,6 +285,7 @@ export function ConnectIntegrationDialog({
     // Reset each time the dialog opens; prefill a reconnect with the previous account.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setAccount(integration.connection?.account ?? "");
+    setSecrets({});
     setErr(null);
     setUpgrade(null);
   }, [integration]);
@@ -256,6 +294,7 @@ export function ConnectIntegrationDialog({
   const i = integration;
   const apiKey = isApiKey(i);
   const reconnect = i.connection?.status === "error";
+  const fields = real ? (CREDENTIAL_FIELDS[i.providerId] ?? []) : [];
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -264,10 +303,18 @@ export function ConnectIntegrationDialog({
       setErr(parsed.error.issues[0]?.message ?? "Enter the account");
       return;
     }
+    const missing = fields.find((f) => !secrets[f.key]?.trim());
+    if (missing) {
+      setErr(`Enter the ${missing.label.toLowerCase()}`);
+      return;
+    }
+    const credentials = fields.length
+      ? Object.fromEntries(fields.map((f) => [f.key, secrets[f.key].trim()]))
+      : undefined;
     setErr(null);
     setUpgrade(null);
     connect.mutate(
-      { providerId: i.providerId, account: parsed.data.account },
+      { providerId: i.providerId, account: parsed.data.account, credentials },
       {
         onSuccess: () => {
           toast.success(`${i.name} ${reconnect ? "reconnected" : "connected"}`, {
@@ -346,8 +393,29 @@ export function ConnectIntegrationDialog({
                 ? "Paste the key in the vault prompt; it goes straight to the secrets vault. ForgePilot stores only this reference and never shows the secret again."
                 : "The access token is stored in the secrets vault. ForgePilot keeps only a reference and the account name."}
             </p>
-            <FieldError id={`${id}-err`} message={err} />
           </div>
+
+          {fields.map((f) => (
+            <div key={f.key} className="flex flex-col gap-1.5">
+              <Label htmlFor={`${id}-${f.key}`}>{f.label}</Label>
+              <Input
+                id={`${id}-${f.key}`}
+                type={f.secret ? "password" : "text"}
+                autoComplete="off"
+                placeholder={f.placeholder}
+                value={secrets[f.key] ?? ""}
+                onChange={(e) => setSecrets((s) => ({ ...s, [f.key]: e.target.value }))}
+              />
+            </div>
+          ))}
+          {fields.length > 0 && (
+            <p className="text-muted-foreground text-xs">
+              Checked with {i.name} before saving, then stored encrypted. It is never shown again.
+              {i.category === "identity" &&
+                " Single sign-on starts working once ForgePilot has confirmed your domain."}
+            </p>
+          )}
+          <FieldError id={`${id}-err`} message={err} />
 
           {upgrade && (
             <div

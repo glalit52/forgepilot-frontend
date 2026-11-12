@@ -75,6 +75,66 @@ export function useSwitchWorkspace() {
     },
   });
 }
+/** Sign-in methods the API offers; decides between the demo screens and real sign-in. */
+export function useAuthOptions() {
+  return useQuery({
+    queryKey: ["auth-options"],
+    queryFn: () => api.get(S.AuthOptionsSchema, "/auth/options"),
+    staleTime: Infinity,
+  });
+}
+export function useLogin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: z.input<typeof S.LoginInputSchema>) =>
+      api.post(S.AuthResultSchema, "/auth/login", input),
+    onSuccess: () => qc.clear(),
+  });
+}
+export function useLogout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post(S.OkSchema, "/auth/logout"),
+    onSuccess: () => qc.clear(),
+  });
+}
+const OkResult = S.OkSchema;
+/** Second step of sign-in for accounts with an authenticator app. */
+export function useTwoFactorVerify() {
+  return useMutation({
+    mutationFn: (code: string) => api.post(OkResult, "/auth/2fa/verify", { code }),
+  });
+}
+export function useVerifyEmail() {
+  return useMutation({
+    mutationFn: (token: string) => api.post(OkResult, "/auth/verify-email", { token }),
+  });
+}
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (email: string) => api.post(OkResult, "/auth/password/forgot", { email }),
+  });
+}
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: (input: { token: string; password: string }) =>
+      api.post(OkResult, "/auth/password/reset", input),
+  });
+}
+export function useDeleteWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (confirm: string) => api.post(OkResult, "/workspace/delete", { confirm }),
+    onSuccess: () => qc.clear(),
+  });
+}
+export function useDeleteAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (confirm: string) => api.post(OkResult, "/me/delete", { confirm }),
+    onSuccess: () => qc.clear(),
+  });
+}
 export function useSignUp() {
   return useMutation({
     mutationFn: (input: S.SignUpInput) => api.post(S.UserSchema, "/signup", input),
@@ -101,8 +161,8 @@ export function useGithubRepositories(account: string, enabled: boolean) {
   });
 }
 export function useInstallGithub() {
-  return useAction((account: string) =>
-    api.post(S.IntegrationSchema, "/github/install", { account }),
+  return useAction((input: { account: string; installationId?: number }) =>
+    api.post(S.IntegrationSchema, "/github/install", input),
   );
 }
 export function useConnectRepositories() {
@@ -491,8 +551,20 @@ export function useIntegrations() {
   });
 }
 export function useConnectIntegration() {
-  return useAction(({ providerId, account }: { providerId: string; account: string }) =>
-    api.post(S.IntegrationSchema, `/integrations/${providerId}/connect`, { account }),
+  return useAction(
+    ({
+      providerId,
+      account,
+      credentials,
+    }: {
+      providerId: string;
+      account: string;
+      credentials?: Record<string, string>;
+    }) =>
+      api.post(S.IntegrationSchema, `/integrations/${providerId}/connect`, {
+        account,
+        ...(credentials ? { credentials } : {}),
+      }),
   );
 }
 export function useDisconnectIntegration() {
